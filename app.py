@@ -221,8 +221,14 @@ def render_dispatch_info(sim: Simulation) -> None:
         if snap.dispatch_status == "DISPATCHED":
             st.warning(
                 f"📦 Order Triggered & **DISPATCHED** — "
-                f"Q = {snap.Q} (AC={snap.AC} + D×(LT+LW)={sim.D * (sim.LT + sim.LW)}, capped at TC={sim.TC}). "
+                f"Q = {snap.Q} (AC + D×(LT+LW) − pending arrivals in window, capped at TC={sim.TC}). "
                 f"Expected arrival: **Day {snap.arrival_day}**."
+            )
+        elif snap.dispatch_status == "NOT_NEEDED":
+            st.info(
+                "ℹ️ Order Triggered but **NOT NEEDED** — pending in-flight "
+                "arrivals during the transit window already cover projected demand "
+                "(computed Q ≤ 0)."
             )
         elif snap.dispatch_status == "BLOCKED":
             st.error(
@@ -352,6 +358,8 @@ def render_summary_table(sim: Simulation) -> None:
             action = f"DISPATCHED Q={s.Q} (arr Day {s.arrival_day})"
         elif s.dispatch_status == "BLOCKED":
             action = "BLOCKED (capacity)"
+        elif s.dispatch_status == "NOT_NEEDED":
+            action = "NOT NEEDED (in-flight covers demand)"
         else:
             action = "—"
         rows.append({
@@ -402,7 +410,7 @@ def render_main() -> None:
 - **ROP** = D × (10 + LT + LW)
 - **Trigger** when (I + SIT + PO) ≤ ROP
 - **AC** = TC − I
-- **Q** = min(AC + D × (LT + LW), TC)
+- **Q** = min(max(0, AC + D × (LT + LW) − pending SIT arrivals in transit window), TC)
 - **Block** dispatch when (I + SIT + PO) ≥ TC
 - Orders dispatched on Day X arrive on **Day X + LT + LW** (loading window + transit, SIT → I)
 - System-generated orders go **directly to SIT** (PO is reserved for the Day-0 Open PO)

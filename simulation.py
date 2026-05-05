@@ -3,7 +3,9 @@
 Implements a 20-day inventory cycle following the TLB dispatch formula:
     ROP = D * (10 + LT + LW)
     Trigger when (I + SIT + PO) <= ROP
-    Q = min(AC + D*(LT+LW), TC), where AC = TC - I
+    Q = min(max(0, AC + D*(LT+LW) - SIT_arrivals_in_window), TC),
+        where AC = TC - I and SIT_arrivals_in_window is the sum of
+        pending SIT quantities arriving during (day, day+LT+LW]
     Block dispatch when (I + SIT + PO) >= TC
     Orders dispatched on day X spend LW days in loading at source plus
     LT days in transit, and arrive (SIT -> I) on day X + LT + LW.
@@ -48,7 +50,7 @@ class DaySnapshot:
     ROP: int
     triggered: bool
     Q: Optional[int]
-    dispatch_status: str  # "DISPATCHED", "BLOCKED", "NO_ORDER", "NOT_STARTED"
+    dispatch_status: str  # "DISPATCHED", "BLOCKED", "NOT_NEEDED", "NO_ORDER", "NOT_STARTED"
     arrival_day: Optional[int]
     pending_orders: List[PendingOrder] = field(default_factory=list)
     status_color: str = "GREEN"  # GREEN / YELLOW / RED
@@ -205,16 +207,33 @@ class Simulation:
         if triggered:
             if total < self.TC:
                 AC = self.TC - self.I
-                Q = min(AC + self.D * (self.LT + self.LW), self.TC)
-                # Loading Window (LW) at source + Lead Time (LT) in transit:
-                # order leaves Day X, arrives at branch on Day X + LT + LW.
-                arrival_day = day + self.LT + self.LW
-                # System-generated orders go directly to SIT (bypass PO)
-                self.SIT += Q
-                self.pending_orders.append(
-                    PendingOrder(dispatch_day=day, qty=Q, arrival_day=arrival_day)
+                # Subtract any in-flight inventory that will arrive during the
+                # new order's transit window (day, day+LT+LW] so concurrent
+                # inflows don't stack and push I above TC. This includes
+                # pending SIT plus the not-yet-dispatched initial Open PO
+                # (which will arrive on Day 2 + LT once dispatched).
+                window_end = day + self.LT + self.LW
+                in_flight_in_window = sum(
+                    o.qty for o in self.pending_orders
+                    if day < o.arrival_day <= window_end
                 )
-                dispatch_status = "DISPATCHED"
+                if (
+                    not self.initial_po_dispatched
+                    and self.PO_init > 0
+                    and day < INITIAL_PO_DISPATCH_DAY + self.LT <= window_end
+                ):
+                    in_flight_in_window += self.PO_init
+                raw_Q = AC + self.D * (self.LT + self.LW) - in_flight_in_window
+                Q = min(max(0, raw_Q), self.TC)
+                if Q > 0:
+                    arrival_day = window_end
+                    self.SIT += Q
+                    self.pending_orders.append(
+                        PendingOrder(dispatch_day=day, qty=Q, arrival_day=arrival_day)
+                    )
+                    dispatch_status = "DISPATCHED"
+                else:
+                    dispatch_status = "NOT_NEEDED"
             else:
                 dispatch_status = "BLOCKED"
 
