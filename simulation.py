@@ -5,13 +5,14 @@ Implements a 20-day inventory cycle following the TLB dispatch formula:
     Trigger when (I + SIT + PO) <= ROP
     Q = min(AC + D*(LT+LW), TC), where AC = TC - I
     Block dispatch when (I + SIT + PO) >= TC
-    Orders dispatched on day X arrive (move SIT -> I) on day X + LT.
+    Orders dispatched on day X spend LW days in loading at source plus
+    LT days in transit, and arrive (SIT -> I) on day X + LT + LW.
 
 Initial-state extensions:
     - SIT (Day 0): user-defined qty already in transit; arrives in I on
       day = SIT_transit_time.
     - Open PO (Day 0): user-defined qty awaiting dispatch; on Day 2 it
-      moves from PO -> SIT and then arrives in I on Day 2 + LT.
+      moves PO -> SIT and then arrives in I on Day 2 + LT + LW.
 """
 
 from __future__ import annotations
@@ -178,7 +179,7 @@ class Simulation:
         ):
             self.PO = max(0, self.PO - self.PO_init)
             self.SIT += self.PO_init
-            arrival_day_initial_po = INITIAL_PO_DISPATCH_DAY + self.LT
+            arrival_day_initial_po = INITIAL_PO_DISPATCH_DAY + self.LT + self.LW
             self.pending_orders.append(PendingOrder(
                 dispatch_day=INITIAL_PO_DISPATCH_DAY,
                 qty=self.PO_init,
@@ -202,7 +203,9 @@ class Simulation:
             if total < self.TC:
                 AC = self.TC - self.I
                 Q = min(AC + self.D * (self.LT + self.LW), self.TC)
-                arrival_day = day + self.LT
+                # Loading Window (LW) at source + Lead Time (LT) in transit:
+                # order leaves Day X, arrives at branch on Day X + LT + LW.
+                arrival_day = day + self.LT + self.LW
                 # System-generated orders go directly to SIT (bypass PO)
                 self.SIT += Q
                 self.pending_orders.append(
