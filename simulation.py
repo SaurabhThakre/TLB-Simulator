@@ -12,7 +12,8 @@ Initial-state extensions:
     - SIT (Day 0): user-defined qty already in transit; arrives in I on
       day = SIT_transit_time.
     - Open PO (Day 0): user-defined qty awaiting dispatch; on Day 2 it
-      moves PO -> SIT and then arrives in I on Day 2 + LT + LW.
+      moves PO -> SIT and then arrives in I on Day 2 + LT (the Day 2
+      dispatch already represents the loading-window step).
 """
 
 from __future__ import annotations
@@ -179,7 +180,9 @@ class Simulation:
         ):
             self.PO = max(0, self.PO - self.PO_init)
             self.SIT += self.PO_init
-            arrival_day_initial_po = INITIAL_PO_DISPATCH_DAY + self.LT + self.LW
+            # Day 2 dispatch already absorbs the loading-window step,
+            # so arrival is +LT additional days (no extra LW).
+            arrival_day_initial_po = INITIAL_PO_DISPATCH_DAY + self.LT
             self.pending_orders.append(PendingOrder(
                 dispatch_day=INITIAL_PO_DISPATCH_DAY,
                 qty=self.PO_init,

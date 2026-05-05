@@ -233,7 +233,7 @@ def render_dispatch_info(sim: Simulation) -> None:
     if snap.initial_po_dispatched_today > 0:
         st.info(
             f"📤 Initial Open PO dispatched today: {snap.initial_po_dispatched_today} "
-            f"moved from PO → SIT (will arrive in I on Day {snap.day + sim.LT + sim.LW})."
+            f"moved from PO → SIT (will arrive in I on Day {snap.day + sim.LT})."
         )
 
     kind_labels = {
@@ -267,7 +267,7 @@ def render_dispatch_info(sim: Simulation) -> None:
                 "Quantity": snap.PO,
                 "Dispatch Day": 2,
                 "Days Until Dispatch": days_until_dispatch,
-                "Expected Arrival Day": 2 + sim.LT + sim.LW,
+                "Expected Arrival Day": 2 + sim.LT,
             }]),
             hide_index=True, use_container_width=True,
         )
@@ -407,7 +407,7 @@ def render_main() -> None:
 - Orders dispatched on Day X arrive on **Day X + LT + LW** (loading window + transit, SIT → I)
 - System-generated orders go **directly to SIT** (PO is reserved for the Day-0 Open PO)
 - **Initial SIT (Day 0):** moves to I after the user-defined transit time
-- **Initial Open PO (Day 0):** moves PO → SIT on **Day 2**, then SIT → I on **Day 2 + LT + LW**
+- **Initial Open PO (Day 0):** moves PO → SIT on **Day 2** (Day 2 already covers the loading window), then SIT → I on **Day 2 + LT**
 - Color zones: **Green** > ROP+2 · **Yellow** within ROP±2 · **Red** < ROP−2 or I=0
                 """
             )
