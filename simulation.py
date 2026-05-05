@@ -6,6 +6,12 @@ Implements a 20-day inventory cycle following the TLB dispatch formula:
     Q = min(AC + D*(LT+LW), TC), where AC = TC - I
     Block dispatch when (I + SIT + PO) >= TC
     Orders dispatched on day X arrive (move SIT -> I) on day X + LT.
+
+Initial-state extensions:
+    - SIT (Day 0): user-defined qty already in transit; arrives in I on
+      day = SIT_transit_time.
+    - Open PO (Day 0): user-defined qty awaiting dispatch; on Day 2 it
+      moves from PO -> SIT and then arrives in I on Day 2 + LT.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 TOTAL_DAYS = 20
+INITIAL_PO_DISPATCH_DAY = 2  # Day on which Day-0 Open PO moves PO -> SIT
 
 
 @dataclass
@@ -21,6 +28,7 @@ class PendingOrder:
     dispatch_day: int
     qty: int
     arrival_day: int
+    kind: str = "system"  # "system" | "initial_sit" | "initial_po"
 
 
 @dataclass
@@ -29,6 +37,7 @@ class DaySnapshot:
     I_before: int
     I_after_consumption: int
     arrivals_today: int
+    initial_po_dispatched_today: int
     I: int
     SIT: int
     PO: int
@@ -45,18 +54,42 @@ class DaySnapshot:
 
 
 class Simulation:
-    def __init__(self, TC: int, I_init: int, LT: int, LW: int, D: int, PO_init: int = 0):
+    def __init__(
+        self,
+        TC: int,
+        I_init: int,
+        LT: int,
+        LW: int,
+        D: int,
+        SIT_init: int = 0,
+        SIT_transit_time: int = 3,
+        PO_init: int = 0,
+    ):
         self.TC = TC
         self.I = I_init
         self.LT = LT
         self.LW = LW
         self.D = D
-        self.SIT = 0
-        self.PO = PO_init  # External purchase orders, static during simulation
+        self.SIT = SIT_init
+        self.PO = PO_init
+        self.SIT_init = SIT_init
+        self.SIT_transit_time = SIT_transit_time
+        self.PO_init = PO_init
+        self.initial_po_dispatched = False
         self.current_day = 0
         self.pending_orders: List[PendingOrder] = []
         self.history: List[DaySnapshot] = []
         self.completed = False
+
+        # Track initial SIT as a pending arrival that lands on day = transit_time
+        if SIT_init > 0:
+            self.pending_orders.append(PendingOrder(
+                dispatch_day=0,
+                qty=SIT_init,
+                arrival_day=SIT_transit_time,
+                kind="initial_sit",
+            ))
+
         self._record_initial()
 
     @property
@@ -91,6 +124,7 @@ class Simulation:
                 I_before=self.I,
                 I_after_consumption=self.I,
                 arrivals_today=0,
+                initial_po_dispatched_today=0,
                 I=self.I,
                 SIT=self.SIT,
                 PO=self.PO,
@@ -135,6 +169,25 @@ class Simulation:
                 remaining.append(order)
         self.pending_orders = remaining
 
+        # Step 1c: Initial Open PO dispatch (PO -> SIT) on the configured day
+        initial_po_dispatched_today = 0
+        if (
+            not self.initial_po_dispatched
+            and self.PO_init > 0
+            and day == INITIAL_PO_DISPATCH_DAY
+        ):
+            self.PO = max(0, self.PO - self.PO_init)
+            self.SIT += self.PO_init
+            arrival_day_initial_po = INITIAL_PO_DISPATCH_DAY + self.LT
+            self.pending_orders.append(PendingOrder(
+                dispatch_day=INITIAL_PO_DISPATCH_DAY,
+                qty=self.PO_init,
+                arrival_day=arrival_day_initial_po,
+                kind="initial_po",
+            ))
+            self.initial_po_dispatched = True
+            initial_po_dispatched_today = self.PO_init
+
         # Step 2: Trigger check
         rop = self.rop
         total = self.total_available
@@ -167,6 +220,7 @@ class Simulation:
             I_before=I_before,
             I_after_consumption=I_after_consumption,
             arrivals_today=arrivals_today,
+            initial_po_dispatched_today=initial_po_dispatched_today,
             I=self.I,
             SIT=self.SIT,
             PO=self.PO,

@@ -28,6 +28,9 @@ def init_session_state() -> None:
         "LT": 7,
         "LW": 2,
         "D": 1,
+        "SIT_init": 5,
+        "SIT_transit_time": 3,
+        "PO_init": 0,
         "sim": None,
     }
     for k, v in defaults.items():
@@ -42,6 +45,9 @@ def start_simulation() -> None:
         LT=int(st.session_state.LT),
         LW=int(st.session_state.LW),
         D=int(st.session_state.D),
+        SIT_init=int(st.session_state.SIT_init),
+        SIT_transit_time=int(st.session_state.SIT_transit_time),
+        PO_init=int(st.session_state.PO_init),
     )
 
 
@@ -91,6 +97,30 @@ def render_sidebar() -> None:
         min_value=1, max_value=50, step=1,
         key="D", disabled=locked,
         help="Daily consumption rate.",
+    )
+
+    st.sidebar.markdown("### Day 0 Initial State")
+
+    st.sidebar.number_input(
+        "SIT — Stock in Transit at Day 0 (days)",
+        min_value=0, max_value=200, step=1,
+        key="SIT_init", disabled=locked,
+        help="Quantity already in transit at the start of the simulation.",
+    )
+    st.sidebar.number_input(
+        "SIT Transit Time (days)",
+        min_value=1, max_value=30, step=1,
+        key="SIT_transit_time", disabled=locked,
+        help="Days until the initial SIT arrives and moves into Inventory (I).",
+    )
+    st.sidebar.number_input(
+        "Open PO at Day 0 (days)",
+        min_value=0, max_value=200, step=1,
+        key="PO_init", disabled=locked,
+        help=(
+            "Quantity awaiting dispatch at Day 0. Moves PO → SIT on Day 2, "
+            "then arrives in I after LT additional days."
+        ),
     )
 
     st.sidebar.markdown("---")
@@ -200,11 +230,24 @@ def render_dispatch_info(sim: Simulation) -> None:
                 f"Total ({snap.total}) ≥ TC ({sim.TC})"
             )
 
+    if snap.initial_po_dispatched_today > 0:
+        st.info(
+            f"📤 Initial Open PO dispatched today: {snap.initial_po_dispatched_today} "
+            f"moved from PO → SIT (will arrive in I on Day {snap.day + sim.LT})."
+        )
+
+    kind_labels = {
+        "system": "System dispatch",
+        "initial_sit": "Initial SIT (Day 0)",
+        "initial_po": "Initial Open PO",
+    }
+
     if snap.pending_orders:
-        st.markdown("##### Pending Orders")
+        st.markdown("##### Pending Orders (in transit, SIT → I)")
         rows = []
         for po in snap.pending_orders:
             rows.append({
+                "Source": kind_labels.get(po.kind, po.kind),
                 "Dispatch Day": po.dispatch_day,
                 "Quantity": po.qty,
                 "Expected Arrival Day": po.arrival_day,
@@ -213,6 +256,21 @@ def render_dispatch_info(sim: Simulation) -> None:
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
     else:
         st.caption("No pending orders in transit.")
+
+    # Show Open PO awaiting dispatch (initial PO not yet moved to SIT)
+    if snap.PO > 0:
+        days_until_dispatch = max(0, 2 - snap.day)
+        st.markdown("##### Open PO (awaiting dispatch)")
+        st.dataframe(
+            pd.DataFrame([{
+                "Source": "Initial Open PO",
+                "Quantity": snap.PO,
+                "Dispatch Day": 2,
+                "Days Until Dispatch": days_until_dispatch,
+                "Expected Arrival Day": 2 + sim.LT,
+            }]),
+            hide_index=True, use_container_width=True,
+        )
 
 
 def render_chart(sim: Simulation) -> None:
@@ -347,7 +405,9 @@ def render_main() -> None:
 - **Q** = min(AC + D × (LT + LW), TC)
 - **Block** dispatch when (I + SIT + PO) ≥ TC
 - Orders dispatched on Day X arrive on **Day X + LT** (SIT → I)
-- System-generated orders go **directly to SIT** (PO is reserved for external/static orders)
+- System-generated orders go **directly to SIT** (PO is reserved for the Day-0 Open PO)
+- **Initial SIT (Day 0):** moves to I after the user-defined transit time
+- **Initial Open PO (Day 0):** moves PO → SIT on **Day 2**, then SIT → I on **Day 2 + LT**
 - Color zones: **Green** > ROP+2 · **Yellow** within ROP±2 · **Red** < ROP−2 or I=0
                 """
             )
