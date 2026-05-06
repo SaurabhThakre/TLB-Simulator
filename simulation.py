@@ -1,7 +1,7 @@
 """TLB Inventory Dispatch Simulation engine.
 
 Implements a 20-day inventory cycle following the TLB dispatch formula:
-    ROP = D * (10 + LT + LW)
+    ROP = D * (0.75 * TC + LT + LW)
     Trigger when (I + SIT + PO) <= ROP
     Q = min(max(0, AC + D*(LT+LW) - SIT_arrivals_in_window), TC),
         where AC = TC - I and SIT_arrivals_in_window is the sum of
@@ -47,7 +47,7 @@ class DaySnapshot:
     PO: int
     total: int
     AC: int
-    ROP: int
+    ROP: float
     triggered: bool
     Q: Optional[int]
     dispatch_status: str  # "DISPATCHED", "BLOCKED", "NOT_NEEDED", "NO_ORDER", "NOT_STARTED"
@@ -97,8 +97,10 @@ class Simulation:
         self._record_initial()
 
     @property
-    def rop(self) -> int:
-        return self.D * (10 + self.LT + self.LW)
+    def rop(self) -> float:
+        # Dynamic safety buffer: 75% of total capacity (instead of a hardcoded
+        # 10-day buffer) so the reorder point scales with warehouse size.
+        return self.D * (0.75 * self.TC + self.LT + self.LW)
 
     @property
     def total_available(self) -> int:
@@ -108,7 +110,7 @@ class Simulation:
     def AC(self) -> int:
         return self.TC - self.I
 
-    def _classify(self, I: int, total: int, rop: int) -> tuple[str, str]:
+    def _classify(self, I: int, total: int, rop: float) -> tuple[str, str]:
         """Section D color rules: GREEN > ROP+2, YELLOW within ±2, RED < ROP-2 or I=0."""
         if I == 0:
             return "RED", "Critical (Stockout)"

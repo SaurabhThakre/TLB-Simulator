@@ -202,7 +202,7 @@ def render_status_dashboard(sim: Simulation) -> None:
 
     n1, n2, n3, n4 = st.columns(4)
     n1.metric("AC — Available Capacity", snap.AC)
-    n2.metric("ROP — Reorder Point", snap.ROP)
+    n2.metric("ROP — Reorder Point", f"{snap.ROP:g}")
     n3.metric("TC — Total Capacity", sim.TC)
     trigger_str = "YES" if snap.triggered else "NO" if snap.day > 0 else "—"
     n4.metric("Trigger?", trigger_str)
@@ -216,7 +216,7 @@ def render_dispatch_info(sim: Simulation) -> None:
 
     st.markdown("#### Dispatch Information")
     if not snap.triggered:
-        st.success(f"✅ No Order Needed — Total ({snap.total}) > ROP ({snap.ROP})")
+        st.success(f"✅ No Order Needed — Total ({snap.total}) > ROP ({snap.ROP:g})")
     else:
         if snap.dispatch_status == "DISPATCHED":
             st.warning(
@@ -304,7 +304,7 @@ def render_chart(sim: Simulation) -> None:
     # ROP horizontal line
     fig.add_hline(
         y=rop_value, line_dash="dash", line_color="#dc2626",
-        annotation_text=f"ROP = {rop_value}", annotation_position="right",
+        annotation_text=f"ROP = {rop_value:g}", annotation_position="right",
     )
 
     # I + SIT line
@@ -407,7 +407,7 @@ def render_main() -> None:
         with st.expander("📐 Formulas & Rules", expanded=True):
             st.markdown(
                 """
-- **ROP** = D × (10 + LT + LW)
+- **ROP** = D × (0.75 × TC + LT + LW)  *(75% of TC scales the safety buffer with warehouse size)*
 - **Trigger** when (I + SIT + PO) ≤ ROP
 - **AC** = TC − I
 - **Q** = min(max(0, AC + D × (LT + LW) − pending SIT arrivals in transit window), TC)
