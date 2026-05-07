@@ -1,38 +1,43 @@
-"""TLB Inventory Dispatch Simulation engine.
+"""TLB Inventory Dispatch Simulation engine - new dispatch algorithm.
 
-Implements a 20-day inventory cycle following the TLB dispatch formula:
-    ROP = D * (0.75 * TC + LT + LW)
-    Trigger when (I + SIT + PO) <= ROP
-    Q = min(max(0, AC + D*(LT+LW) - SIT_arrivals_in_window), TC),
-        where AC = TC - I and SIT_arrivals_in_window is the sum of
-        pending SIT quantities arriving during (day, day+LT+LW]
-    Block dispatch when (I + SIT + PO) >= TC
-    Orders dispatched on day X spend LW days in loading at source plus
-    LT days in transit, and arrive (SIT -> I) on day X + LT + LW.
+Implements a 20-day inventory cycle following the new TLB algorithm:
 
-Initial-state extensions:
-    - SIT (Day 0): user-defined qty already in transit; arrives in I on
-      day = SIT_transit_time.
-    - Open PO (Day 0): user-defined qty awaiting dispatch; on Day 2 it
-      moves PO -> SIT and then arrives in I on Day 2 + LT (the Day 2
-      dispatch already represents the loading-window step).
+  Floor (75% of TC) replaces the legacy ROP.
+  Trigger when projected I (after LT+LW days, factoring in arriving SIT)
+      <= 0.75 * TC.
+  Dispatch quantity:
+      term1 = TC - max(0, I + SIT_Total - (LT+LW)*D)
+      term2 = TC - max(0, I - (LT+LW)*D) - sd(SIT, DD, I, LT+LW)
+      Q = max(0, min(term1, term2))
+  If Q == 0 the dispatch is skipped entirely; no empty SIT/DD entry is
+  created.
+
+Stock In Transit tracking:
+  SIT (dict): order_index -> quantity dispatched
+  DD  (dict): order_index -> days already in transit
+  An order arrives when DD[k] == LT+LW. Days remaining = (LT+LW) - DD[k].
+
+Daily flow per the reference algorithm:
+  1. Daily consumption.
+  2. Process SIT arrivals (check arrival, then increment DD).
+  3. Trigger check via projected I.
+  4. Compute Q and place new order if triggered.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 TOTAL_DAYS = 20
-INITIAL_PO_DISPATCH_DAY = 2  # Day on which Day-0 Open PO moves PO -> SIT
 
 
 @dataclass
 class PendingOrder:
-    dispatch_day: int
+    order_index: int
     qty: int
-    arrival_day: int
-    kind: str = "system"  # "system" | "initial_sit" | "initial_po"
+    days_in_transit: int
+    days_remaining: int
 
 
 @dataclass
@@ -41,20 +46,48 @@ class DaySnapshot:
     I_before: int
     I_after_consumption: int
     arrivals_today: int
-    initial_po_dispatched_today: int
+    arrival_orders: List[int]
     I: int
-    SIT: int
-    PO: int
-    total: int
-    AC: int
-    ROP: float
+    SIT_Total: int
+    projected_I: float
+    floor_75: float
+    floor_50: float
+    floor_breached: bool
     triggered: bool
     Q: Optional[int]
-    dispatch_status: str  # "DISPATCHED", "BLOCKED", "NOT_NEEDED", "NO_ORDER", "NOT_STARTED"
-    arrival_day: Optional[int]
+    dispatch_status: str  # "DISPATCHED" | "NOT_NEEDED" | "NO_TRIGGER" | "NOT_STARTED"
     pending_orders: List[PendingOrder] = field(default_factory=list)
-    status_color: str = "GREEN"  # GREEN / YELLOW / RED
+    status_color: str = "GREEN"
     status_label: str = "Safe"
+
+
+def sd(SIT: Dict[int, int], DD: Dict[int, int], I: int, TLT: int, D: int) -> float:
+    """Estimate how much SIT will remain after consumption upon arrival.
+
+    Mirrors the reference algorithm exactly: iterate orders in index order,
+    find the first whose post-consumption remainder is positive, then add
+    the full quantities of all subsequent in-transit orders.
+    """
+    if D <= 0:
+        return 0.0
+    keys = sorted(SIT.keys())
+    for i, l in enumerate(keys):
+        if TLT >= I / D + DD[l]:
+            value = SIT[l] / D - DD[l]
+        else:
+            value = SIT[l] / D - max(
+                min(
+                    SIT[l] / D,
+                    TLT - max(TLT - DD[l], 0) - max(I / D - max(TLT - DD[l], 0), 0),
+                ),
+                0,
+            )
+        if value > 0:
+            total = value
+            for next_key in keys[i + 1:]:
+                total += SIT[next_key] / D
+            return total * D
+    return 0.0
 
 
 class Simulation:
@@ -65,83 +98,92 @@ class Simulation:
         LT: int,
         LW: int,
         D: int,
-        SIT_init: int = 0,
-        SIT_transit_time: int = 3,
-        PO_init: int = 0,
+        SIT_init: int = 5,
+        DD_init: int = 6,
     ):
         self.TC = TC
         self.I = I_init
         self.LT = LT
         self.LW = LW
         self.D = D
-        self.SIT = SIT_init
-        self.PO = PO_init
         self.SIT_init = SIT_init
-        self.SIT_transit_time = SIT_transit_time
-        self.PO_init = PO_init
-        self.initial_po_dispatched = False
+        self.DD_init = DD_init
+        self.SIT: Dict[int, int] = {0: SIT_init}
+        self.DD: Dict[int, int] = {0: DD_init}
+        self.j = 0
         self.current_day = 0
-        self.pending_orders: List[PendingOrder] = []
         self.history: List[DaySnapshot] = []
         self.completed = False
-
-        # Track initial SIT as a pending arrival that lands on day = transit_time
-        if SIT_init > 0:
-            self.pending_orders.append(PendingOrder(
-                dispatch_day=0,
-                qty=SIT_init,
-                arrival_day=SIT_transit_time,
-                kind="initial_sit",
-            ))
-
         self._record_initial()
 
     @property
-    def rop(self) -> float:
-        # Dynamic safety buffer: 75% of total capacity (instead of a hardcoded
-        # 10-day buffer) so the reorder point scales with warehouse size.
-        return self.D * (0.75 * self.TC + self.LT + self.LW)
+    def TLT(self) -> int:
+        return self.LT + self.LW
 
     @property
-    def total_available(self) -> int:
-        return self.I + self.SIT + self.PO
+    def floor_75(self) -> float:
+        return 0.75 * self.TC
 
     @property
-    def AC(self) -> int:
-        return self.TC - self.I
+    def floor_50(self) -> float:
+        return 0.50 * self.TC
 
-    def _classify(self, I: int, total: int, rop: float) -> tuple[str, str]:
-        """Section D color rules: GREEN > ROP+2, YELLOW within ±2, RED < ROP-2 or I=0."""
-        if I == 0:
+    @property
+    def SIT_Total(self) -> int:
+        return sum(self.SIT.values())
+
+    def projected_I(self) -> float:
+        bare = max(0, self.I - self.TLT * self.D)
+        with_sit = sd(self.SIT, self.DD, self.I, self.TLT, self.D)
+        return bare + with_sit
+
+    def _classify(self) -> Tuple[str, str]:
+        # Status color is driven by I alone.
+        if self.I == 0:
             return "RED", "Critical (Stockout)"
-        if total > rop + 2:
-            return "GREEN", "Safe"
-        if total < rop - 2:
-            return "RED", "Critical"
-        return "YELLOW", "Warning"
+        if self.I > self.floor_75:
+            return "GREEN", "Safe (above 75% floor)"
+        if self.I > self.floor_50:
+            return "YELLOW", "Warning (50%–75%)"
+        return "RED", "Critical (≤ 50%)"
+
+    def _pending_list(self) -> List[PendingOrder]:
+        result: List[PendingOrder] = []
+        for k in sorted(self.SIT.keys()):
+            qty = self.SIT[k]
+            if qty <= 0:
+                continue
+            dd = self.DD[k]
+            result.append(
+                PendingOrder(
+                    order_index=k,
+                    qty=qty,
+                    days_in_transit=dd,
+                    days_remaining=self.TLT - dd,
+                )
+            )
+        return result
 
     def _record_initial(self) -> None:
-        rop = self.rop
-        total = self.total_available
-        color, label = self._classify(self.I, total, rop)
+        color, label = self._classify()
+        proj = self.projected_I()
         self.history.append(
             DaySnapshot(
                 day=0,
                 I_before=self.I,
                 I_after_consumption=self.I,
                 arrivals_today=0,
-                initial_po_dispatched_today=0,
+                arrival_orders=[],
                 I=self.I,
-                SIT=self.SIT,
-                PO=self.PO,
-                total=total,
-                AC=self.AC,
-                ROP=rop,
+                SIT_Total=self.SIT_Total,
+                projected_I=proj,
+                floor_75=self.floor_75,
+                floor_50=self.floor_50,
+                floor_breached=proj <= self.floor_75,
                 triggered=False,
                 Q=None,
                 dispatch_status="NOT_STARTED",
-                arrival_day=None,
-                pending_orders=list(self.pending_orders),
+                pending_orders=self._pending_list(),
                 status_color=color,
                 status_label=label,
             )
@@ -156,109 +198,71 @@ class Simulation:
 
         self.current_day += 1
         day = self.current_day
-
         I_before = self.I
 
-        # Step 1: Daily consumption (cap at 0 for stockout)
-        self.I = max(0, self.I - self.D)
+        # Step 1: Daily consumption
+        if self.I > 0:
+            self.I -= self.D
+        self.I = max(0, self.I)
         I_after_consumption = self.I
 
-        # Step 1b: Process arrivals - SIT -> I for orders arriving today
+        # Step 2: Process SIT arrivals (check, then increment)
         arrivals_today = 0
-        remaining: List[PendingOrder] = []
-        for order in self.pending_orders:
-            if order.arrival_day == day:
-                self.SIT = max(0, self.SIT - order.qty)
-                self.I += order.qty
-                arrivals_today += order.qty
-            else:
-                remaining.append(order)
-        self.pending_orders = remaining
+        arrival_orders: List[int] = []
+        for k in list(self.DD.keys()):
+            if self.SIT[k] == 0:
+                continue
+            if self.DD[k] == self.TLT:
+                self.I += self.SIT[k]
+                arrivals_today += self.SIT[k]
+                arrival_orders.append(k)
+                self.DD[k] = 0
+                self.SIT[k] = 0
+            if self.SIT[k] != 0:
+                self.DD[k] += 1
 
-        # Step 1c: Initial Open PO dispatch (PO -> SIT) on the configured day
-        initial_po_dispatched_today = 0
-        if (
-            not self.initial_po_dispatched
-            and self.PO_init > 0
-            and day == INITIAL_PO_DISPATCH_DAY
-        ):
-            self.PO = max(0, self.PO - self.PO_init)
-            self.SIT += self.PO_init
-            # Day 2 dispatch already absorbs the loading-window step,
-            # so arrival is +LT additional days (no extra LW).
-            arrival_day_initial_po = INITIAL_PO_DISPATCH_DAY + self.LT
-            self.pending_orders.append(PendingOrder(
-                dispatch_day=INITIAL_PO_DISPATCH_DAY,
-                qty=self.PO_init,
-                arrival_day=arrival_day_initial_po,
-                kind="initial_po",
-            ))
-            self.initial_po_dispatched = True
-            initial_po_dispatched_today = self.PO_init
+        # Step 3: Trigger condition - projected I after LT+LW days
+        proj_bare = max(0, self.I - self.TLT * self.D)
+        proj_sit = sd(self.SIT, self.DD, self.I, self.TLT, self.D)
+        projected_total = proj_bare + proj_sit
+        floor = self.floor_75
+        triggered = projected_total <= floor
 
-        # Step 2: Trigger check
-        rop = self.rop
-        total = self.total_available
-        triggered = total <= rop
-
-        # Step 3: Dispatch if triggered
-        Q: Optional[int] = None
-        dispatch_status = "NO_ORDER"
-        arrival_day: Optional[int] = None
-
+        # Step 4: Compute Q and place dispatch
+        Q_value: Optional[int] = None
+        dispatch_status = "NO_TRIGGER"
         if triggered:
-            if total < self.TC:
-                AC = self.TC - self.I
-                # Subtract any in-flight inventory that will arrive during the
-                # new order's transit window (day, day+LT+LW] so concurrent
-                # inflows don't stack and push I above TC. This includes
-                # pending SIT plus the not-yet-dispatched initial Open PO
-                # (which will arrive on Day 2 + LT once dispatched).
-                window_end = day + self.LT + self.LW
-                in_flight_in_window = sum(
-                    o.qty for o in self.pending_orders
-                    if day < o.arrival_day <= window_end
-                )
-                if (
-                    not self.initial_po_dispatched
-                    and self.PO_init > 0
-                    and day < INITIAL_PO_DISPATCH_DAY + self.LT <= window_end
-                ):
-                    in_flight_in_window += self.PO_init
-                raw_Q = AC + self.D * (self.LT + self.LW) - in_flight_in_window
-                Q = min(max(0, raw_Q), self.TC)
-                if Q > 0:
-                    arrival_day = window_end
-                    self.SIT += Q
-                    self.pending_orders.append(
-                        PendingOrder(dispatch_day=day, qty=Q, arrival_day=arrival_day)
-                    )
-                    dispatch_status = "DISPATCHED"
-                else:
-                    dispatch_status = "NOT_NEEDED"
+            term1 = self.TC - max(0, self.I + self.SIT_Total - self.TLT * self.D)
+            term2 = self.TC - max(0, self.I - self.TLT * self.D) - proj_sit
+            Q_raw = max(0, min(term1, term2))
+            Q_int = int(round(Q_raw))
+            if Q_int > 0:
+                self.j += 1
+                self.SIT[self.j] = Q_int
+                self.DD[self.j] = 0
+                Q_value = Q_int
+                dispatch_status = "DISPATCHED"
             else:
-                dispatch_status = "BLOCKED"
+                Q_value = 0
+                dispatch_status = "NOT_NEEDED"
 
-        # Snapshot
-        post_total = self.total_available
-        color, label = self._classify(self.I, post_total, rop)
+        color, label = self._classify()
         snapshot = DaySnapshot(
             day=day,
             I_before=I_before,
             I_after_consumption=I_after_consumption,
             arrivals_today=arrivals_today,
-            initial_po_dispatched_today=initial_po_dispatched_today,
+            arrival_orders=arrival_orders,
             I=self.I,
-            SIT=self.SIT,
-            PO=self.PO,
-            total=post_total,
-            AC=self.TC - self.I,
-            ROP=rop,
+            SIT_Total=self.SIT_Total,
+            projected_I=projected_total,
+            floor_75=floor,
+            floor_50=self.floor_50,
+            floor_breached=triggered,
             triggered=triggered,
-            Q=Q,
+            Q=Q_value,
             dispatch_status=dispatch_status,
-            arrival_day=arrival_day,
-            pending_orders=list(self.pending_orders),
+            pending_orders=self._pending_list(),
             status_color=color,
             status_label=label,
         )

@@ -23,14 +23,13 @@ COLOR_HEX = {
 
 def init_session_state() -> None:
     defaults = {
-        "TC": 15,
-        "I_init": 10,
+        "TC": 10,
+        "I_init": 5,
         "LT": 7,
         "LW": 2,
         "D": 1,
         "SIT_init": 5,
-        "SIT_transit_time": 3,
-        "PO_init": 0,
+        "DD_init": 6,
         "sim": None,
     }
     for k, v in defaults.items():
@@ -46,8 +45,7 @@ def start_simulation() -> None:
         LW=int(st.session_state.LW),
         D=int(st.session_state.D),
         SIT_init=int(st.session_state.SIT_init),
-        SIT_transit_time=int(st.session_state.SIT_transit_time),
-        PO_init=int(st.session_state.PO_init),
+        DD_init=int(st.session_state.DD_init),
     )
 
 
@@ -90,7 +88,7 @@ def render_sidebar() -> None:
         "LW — Loading Window (days)",
         min_value=0, max_value=30, step=1,
         key="LW", disabled=locked,
-        help="Loading window factored into ROP.",
+        help="Loading window factored into arrival timing (LT+LW).",
     )
     st.sidebar.number_input(
         "D — Daily Consumption (days)",
@@ -99,28 +97,26 @@ def render_sidebar() -> None:
         help="Daily consumption rate.",
     )
 
-    st.sidebar.markdown("### Day 0 Initial State")
+    st.sidebar.markdown("### Day 0 Initial SIT")
 
     st.sidebar.number_input(
-        "SIT — Stock in Transit at Day 0 (days)",
+        "SIT[0] — Stock in Transit qty",
         min_value=0, max_value=200, step=1,
         key="SIT_init", disabled=locked,
-        help="Quantity already in transit at the start of the simulation.",
+        help="Initial Stock in Transit quantity at Day 0.",
     )
     st.sidebar.number_input(
-        "SIT Transit Time (days)",
-        min_value=1, max_value=30, step=1,
-        key="SIT_transit_time", disabled=locked,
-        help="Days until the initial SIT arrives and moves into Inventory (I).",
+        "DD[0] — Days Already in Transit",
+        min_value=0, max_value=60, step=1,
+        key="DD_init", disabled=locked,
+        help="How many days ago this stock was dispatched. Arrives when DD reaches LT+LW.",
     )
-    st.sidebar.number_input(
-        "Open PO at Day 0 (days)",
-        min_value=0, max_value=200, step=1,
-        key="PO_init", disabled=locked,
-        help=(
-            "Quantity awaiting dispatch at Day 0. Moves PO → SIT on Day 2, "
-            "then arrives in I after LT additional days."
-        ),
+
+    tlt = int(st.session_state.LT) + int(st.session_state.LW)
+    days_remaining = max(0, tlt - int(st.session_state.DD_init))
+    st.sidebar.caption(
+        f"📍 Days Remaining = (LT+LW) − DD[0] = ({tlt} − {int(st.session_state.DD_init)}) "
+        f"= **{days_remaining}** day(s)"
     )
 
     st.sidebar.markdown("---")
@@ -189,157 +185,169 @@ def render_status_dashboard(sim: Simulation) -> None:
     if snap.day > 0:
         c1, c2, c3 = st.columns(3)
         c1.metric("Inventory Before Consumption", snap.I_before)
-        c2.metric("After Consumption", snap.I_after_consumption,
-                  delta=-(snap.I_before - snap.I_after_consumption) or None)
+        c2.metric(
+            "After Consumption", snap.I_after_consumption,
+            delta=-(snap.I_before - snap.I_after_consumption) or None,
+        )
         c3.metric("Arrivals Today (SIT → I)", snap.arrivals_today)
 
     st.markdown("#### Current Metrics")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("I — Inventory", snap.I)
-    m2.metric("SIT — Stock in Transit", snap.SIT)
-    m3.metric("PO — Purchase Orders", snap.PO)
-    m4.metric("Total Available (I+SIT+PO)", snap.total)
-
-    n1, n2, n3, n4 = st.columns(4)
-    n1.metric("AC — Available Capacity", snap.AC)
-    n2.metric("ROP — Reorder Point", f"{snap.ROP:g}")
-    n3.metric("TC — Total Capacity", sim.TC)
+    m2.metric("SIT_Total", snap.SIT_Total)
+    m3.metric("TC — Total Capacity", sim.TC)
     trigger_str = "YES" if snap.triggered else "NO" if snap.day > 0 else "—"
-    n4.metric("Trigger?", trigger_str)
+    m4.metric("Trigger?", trigger_str)
+
+    n1, n2, n3 = st.columns(3)
+    n1.metric(
+        f"Projected I (after {sim.TLT}d)",
+        f"{snap.projected_I:g}",
+        help="max(0, I − (LT+LW)·D) + sd(SIT, DD, I, LT+LW)",
+    )
+    n2.metric(
+        "75% Floor",
+        f"{snap.floor_75:g}",
+        help="0.75 × TC — trigger fires when projected I drops to or below this floor.",
+    )
+    breach_text = "YES" if snap.floor_breached and snap.day > 0 else "NO" if snap.day > 0 else "—"
+    n3.metric("Floor Breached?", breach_text)
 
 
 def render_dispatch_info(sim: Simulation) -> None:
     snap: DaySnapshot = sim.latest()
     if snap.day == 0:
         st.info("Simulation has not started. Click **Next Day** to execute Day 1.")
+        if snap.pending_orders:
+            _render_pending_table(snap)
         return
 
     st.markdown("#### Dispatch Information")
-    if not snap.triggered:
-        st.success(f"✅ No Order Needed — Total ({snap.total}) > ROP ({snap.ROP:g})")
-    else:
-        if snap.dispatch_status == "DISPATCHED":
-            st.warning(
-                f"📦 Order Triggered & **DISPATCHED** — "
-                f"Q = {snap.Q} (AC + D×(LT+LW) − pending arrivals in window, capped at TC={sim.TC}). "
-                f"Expected arrival: **Day {snap.arrival_day}**."
-            )
-        elif snap.dispatch_status == "NOT_NEEDED":
-            st.info(
-                "ℹ️ Order Triggered but **NOT NEEDED** — pending in-flight "
-                "arrivals during the transit window already cover projected demand "
-                "(computed Q ≤ 0)."
-            )
-        elif snap.dispatch_status == "BLOCKED":
-            st.error(
-                f"🚫 Order Triggered but **BLOCKED** (Capacity Exceeded) — "
-                f"Total ({snap.total}) ≥ TC ({sim.TC})"
-            )
-
-    if snap.initial_po_dispatched_today > 0:
+    if snap.dispatch_status == "DISPATCHED":
+        st.warning(
+            f"📦 Order Triggered & **DISPATCHED** — Q = {snap.Q}. "
+            f"Will arrive when DD reaches **{sim.TLT}**."
+        )
+    elif snap.dispatch_status == "NOT_NEEDED":
         st.info(
-            f"📤 Initial Open PO dispatched today: {snap.initial_po_dispatched_today} "
-            f"moved from PO → SIT (will arrive in I on Day {snap.day + sim.LT})."
+            "ℹ️ Trigger condition met but **dispatch skipped** — computed Q = 0 "
+            "(in-flight SIT already covers projected demand)."
+        )
+    elif snap.dispatch_status == "NO_TRIGGER":
+        st.success(
+            f"✅ No Order Needed — projected I ({snap.projected_I:g}) "
+            f"> 75% floor ({snap.floor_75:g})."
         )
 
-    kind_labels = {
-        "system": "System dispatch",
-        "initial_sit": "Initial SIT (Day 0)",
-        "initial_po": "Initial Open PO",
-    }
+    if snap.arrivals_today > 0:
+        idx_str = ", ".join(f"#{i}" for i in snap.arrival_orders)
+        st.success(
+            f"🛬 Arrived today: {snap.arrivals_today} unit(s) from order(s) {idx_str} "
+            f"(now in I)."
+        )
 
+    _render_pending_table(snap)
+
+
+def _render_pending_table(snap: DaySnapshot) -> None:
     if snap.pending_orders:
-        st.markdown("##### Pending Orders (in transit, SIT → I)")
-        rows = []
-        for po in snap.pending_orders:
-            rows.append({
-                "Source": kind_labels.get(po.kind, po.kind),
-                "Dispatch Day": po.dispatch_day,
-                "Quantity": po.qty,
-                "Expected Arrival Day": po.arrival_day,
-                "Days Remaining": max(0, po.arrival_day - snap.day),
-            })
+        st.markdown("##### Pending Orders (in transit)")
+        rows = [
+            {
+                "Order Index": p.order_index,
+                "Quantity": p.qty,
+                "Days in Transit (DD)": p.days_in_transit,
+                "Days Remaining": p.days_remaining,
+            }
+            for p in snap.pending_orders
+        ]
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
     else:
         st.caption("No pending orders in transit.")
-
-    # Show Open PO awaiting dispatch (initial PO not yet moved to SIT)
-    if snap.PO > 0:
-        days_until_dispatch = max(0, 2 - snap.day)
-        st.markdown("##### Open PO (awaiting dispatch)")
-        st.dataframe(
-            pd.DataFrame([{
-                "Source": "Initial Open PO",
-                "Quantity": snap.PO,
-                "Dispatch Day": 2,
-                "Days Until Dispatch": days_until_dispatch,
-                "Expected Arrival Day": 2 + sim.LT,
-            }]),
-            hide_index=True, use_container_width=True,
-        )
 
 
 def render_chart(sim: Simulation) -> None:
     st.markdown("#### Inventory Over Time")
     history = sim.history
     days = [s.day for s in history]
-    inv_plus_sit = [s.I + s.SIT for s in history]
-    totals = [s.total for s in history]
-    rop_value = sim.rop
+    i_values = [s.I for s in history]
+    i_plus_sit = [s.I + s.SIT_Total for s in history]
+
+    floor_75 = sim.floor_75
+    floor_50 = sim.floor_50
+    tc = sim.TC
 
     fig = go.Figure()
 
-    # Color zones based on ROP ± 2
-    x_max = TOTAL_DAYS
-    fig.add_hrect(y0=rop_value + 2, y1=max(sim.TC, max(totals + [rop_value]) + 5),
-                  fillcolor="green", opacity=0.08, line_width=0,
-                  annotation_text="Safe Zone", annotation_position="top left")
-    fig.add_hrect(y0=max(0, rop_value - 2), y1=rop_value + 2,
-                  fillcolor="yellow", opacity=0.12, line_width=0,
-                  annotation_text="Warning", annotation_position="top left")
-    fig.add_hrect(y0=0, y1=max(0, rop_value - 2),
-                  fillcolor="red", opacity=0.08, line_width=0,
-                  annotation_text="Critical", annotation_position="bottom left")
-
-    # ROP horizontal line
-    fig.add_hline(
-        y=rop_value, line_dash="dash", line_color="#dc2626",
-        annotation_text=f"ROP = {rop_value:g}", annotation_position="right",
+    # Color zones based on I (status driver)
+    chart_top = max(tc + 2, max(i_plus_sit + [floor_75]) + 2)
+    fig.add_hrect(
+        y0=floor_75, y1=chart_top,
+        fillcolor="green", opacity=0.08, line_width=0,
+        annotation_text="Safe (I > 75% TC)", annotation_position="top left",
+    )
+    fig.add_hrect(
+        y0=floor_50, y1=floor_75,
+        fillcolor="yellow", opacity=0.12, line_width=0,
+        annotation_text="Warning (50%–75%)", annotation_position="top left",
+    )
+    fig.add_hrect(
+        y0=0, y1=floor_50,
+        fillcolor="red", opacity=0.08, line_width=0,
+        annotation_text="Critical (≤ 50%)", annotation_position="bottom left",
     )
 
-    # I + SIT line
+    # 75% TC floor line
+    fig.add_hline(
+        y=floor_75, line_dash="dash", line_color="#f97316",
+        annotation_text=f"75% Floor = {floor_75:g}", annotation_position="right",
+    )
+
+    # I (solid blue)
     fig.add_trace(go.Scatter(
-        x=days, y=inv_plus_sit,
-        name="I + SIT",
+        x=days, y=i_values,
+        name="I (On Hand)",
         mode="lines+markers",
         line=dict(color="#2563eb", width=3),
-        marker=dict(size=8),
+        marker=dict(size=7),
     ))
 
-    # Inventory only
+    # I + SIT_Total (dotted blue)
     fig.add_trace(go.Scatter(
-        x=days, y=[s.I for s in history],
-        name="I (On Hand)",
+        x=days, y=i_plus_sit,
+        name="I + SIT_Total (committed)",
         mode="lines",
         line=dict(color="#0ea5e9", width=2, dash="dot"),
     ))
 
-    # Trigger markers (red dots)
-    trigger_days = [s.day for s in history if s.triggered]
-    trigger_vals = [s.I + s.SIT for s in history if s.triggered]
-    if trigger_days:
+    # Trigger markers (red dots) — plotted on the I line
+    trig_days = [s.day for s in history if s.triggered]
+    trig_vals = [s.I for s in history if s.triggered]
+    if trig_days:
         fig.add_trace(go.Scatter(
-            x=trigger_days, y=trigger_vals,
+            x=trig_days, y=trig_vals,
             name="Trigger",
             mode="markers",
             marker=dict(color="#dc2626", size=14, symbol="circle",
                         line=dict(color="white", width=2)),
         ))
 
+    # Arrival markers (green dots) — plotted on the I line
+    arr_days = [s.day for s in history if s.arrivals_today > 0]
+    arr_vals = [s.I for s in history if s.arrivals_today > 0]
+    if arr_days:
+        fig.add_trace(go.Scatter(
+            x=arr_days, y=arr_vals,
+            name="Arrival",
+            mode="markers",
+            marker=dict(color="#16a34a", size=14, symbol="diamond",
+                        line=dict(color="white", width=2)),
+        ))
+
     fig.update_layout(
-        xaxis=dict(title="Day", range=[-0.5, x_max + 0.5], dtick=1),
-        yaxis=dict(title="Inventory Level (days)"),
-        height=450,
+        xaxis=dict(title="Day", range=[-0.5, TOTAL_DAYS + 0.5], dtick=1),
+        yaxis=dict(title="Inventory Level (days)", range=[0, chart_top]),
+        height=460,
         margin=dict(l=40, r=40, t=30, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified",
@@ -355,21 +363,20 @@ def render_summary_table(sim: Simulation) -> None:
         if s.day == 0:
             continue
         if s.dispatch_status == "DISPATCHED":
-            action = f"DISPATCHED Q={s.Q} (arr Day {s.arrival_day})"
-        elif s.dispatch_status == "BLOCKED":
-            action = "BLOCKED (capacity)"
+            action = f"DISPATCHED Q={s.Q}"
         elif s.dispatch_status == "NOT_NEEDED":
-            action = "NOT NEEDED (in-flight covers demand)"
+            action = "NOT NEEDED (Q=0)"
         else:
             action = "—"
         rows.append({
             "Day": s.day,
             "I": s.I,
-            "SIT": s.SIT,
-            "PO": s.PO,
-            "Total": s.total,
-            "ROP": s.ROP,
+            "SIT_Total": s.SIT_Total,
+            f"Projected I (+{sim.TLT}d)": round(s.projected_I, 2),
+            "75% Floor": round(s.floor_75, 2),
+            "Floor Breached?": "YES" if s.floor_breached else "NO",
             "Trigger": "YES" if s.triggered else "NO",
+            "Q": s.Q if s.Q is not None else "—",
             "Action": action,
             "Status": s.status_label,
         })
@@ -407,23 +414,27 @@ def render_main() -> None:
         with st.expander("📐 Formulas & Rules", expanded=True):
             st.markdown(
                 """
-- **ROP** = D × (0.75 × TC + LT + LW)  *(75% of TC scales the safety buffer with warehouse size)*
-- **Trigger** when (I + SIT + PO) ≤ ROP
-- **AC** = TC − I
-- **Q** = min(max(0, AC + D × (LT + LW) − pending SIT arrivals in transit window), TC)
-- **Block** dispatch when (I + SIT + PO) ≥ TC
-- Orders dispatched on Day X arrive on **Day X + LT + LW** (loading window + transit, SIT → I)
-- System-generated orders go **directly to SIT** (PO is reserved for the Day-0 Open PO)
-- **Initial SIT (Day 0):** moves to I after the user-defined transit time
-- **Initial Open PO (Day 0):** moves PO → SIT on **Day 2** (Day 2 already covers the loading window), then SIT → I on **Day 2 + LT**
-- Color zones: **Green** > ROP+2 · **Yellow** within ROP±2 · **Red** < ROP−2 or I=0
+- **75% Floor** = 0.75 × TC  *(replaces the legacy ROP)*
+- **Projected I** = max(0, I − (LT+LW)·D) + sd(SIT, DD, I, LT+LW)
+- **Trigger** when Projected I ≤ 75% Floor
+- **Q** = max(0, min(term1, term2)) where
+    - term1 = TC − max(0, I + SIT_Total − (LT+LW)·D)
+    - term2 = TC − max(0, I − (LT+LW)·D) − sd(SIT, DD, I, LT+LW)
+- If **Q = 0**, dispatch is skipped (no empty SIT entry).
+- Orders are tracked in dictionaries `SIT[k]` (qty) and `DD[k]` (days in transit).
+  An order arrives when `DD[k] == LT+LW`.
+- Daily flow: **Consume → Process Arrivals → Trigger Check → Dispatch.**
+- Status color (driven by **I** alone):
+  🟢 I > 0.75·TC · 🟡 0.50·TC < I ≤ 0.75·TC · 🔴 I ≤ 0.50·TC or I = 0.
                 """
             )
         return
 
     if sim.completed:
-        st.success("✅ Simulation Complete — review the chart and summary below, "
-                   "or click **Reset Simulation** to run again.")
+        st.success(
+            "✅ Simulation Complete — review the chart and summary below, "
+            "or click **Reset Simulation** to run again."
+        )
 
     render_status_dashboard(sim)
     st.markdown("---")
