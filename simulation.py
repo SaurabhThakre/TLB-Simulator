@@ -213,7 +213,7 @@ class Simulation:
             if self.SIT[k] == 0:
                 continue
             if self.DD[k] == self.TLT:
-                self.I += self.SIT[k]
+                self.I = min(self.I + self.SIT[k], self.TC)
                 arrivals_today += self.SIT[k]
                 arrival_orders.append(k)
                 self.DD[k] = 0
