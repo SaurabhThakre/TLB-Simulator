@@ -23,13 +23,14 @@ COLOR_HEX = {
 
 def init_session_state() -> None:
     defaults = {
-        "TC": 10,
-        "I_init": 5,
+        "TC": 10.0,
+        "I_init": 5.0,
         "LT": 7,
         "LW": 2,
-        "D": 1,
-        "SIT_init": 5,
-        "DD_init": 6,
+        "D": 1.0,
+        "SIT_init": 0.0,
+        "DD_init": 0,
+        "threshold_pct": 75,
         "sim": None,
     }
     for k, v in defaults.items():
@@ -39,13 +40,14 @@ def init_session_state() -> None:
 
 def start_simulation() -> None:
     st.session_state.sim = Simulation(
-        TC=int(st.session_state.TC),
-        I_init=int(st.session_state.I_init),
+        TC=float(st.session_state.TC),
+        I_init=float(st.session_state.I_init),
         LT=int(st.session_state.LT),
         LW=int(st.session_state.LW),
-        D=int(st.session_state.D),
-        SIT_init=int(st.session_state.SIT_init),
+        D=float(st.session_state.D),
+        SIT_init=float(st.session_state.SIT_init),
         DD_init=int(st.session_state.DD_init),
+        threshold_pct=float(st.session_state.threshold_pct) / 100.0,
     )
 
 
@@ -68,13 +70,13 @@ def render_sidebar() -> None:
 
     st.sidebar.number_input(
         "TC — Total Capacity (days)",
-        min_value=1, max_value=200, step=1,
+        min_value=0.1, max_value=200.0, step=0.1, format="%.4f",
         key="TC", disabled=locked,
         help="Maximum inventory capacity in days of supply.",
     )
     st.sidebar.number_input(
         "I — Initial Inventory (days)",
-        min_value=0, max_value=200, step=1,
+        min_value=0.0, max_value=200.0, step=0.1, format="%.4f",
         key="I_init", disabled=locked,
         help="Starting on-hand inventory in days of supply.",
     )
@@ -92,16 +94,24 @@ def render_sidebar() -> None:
     )
     st.sidebar.number_input(
         "D — Daily Consumption (days)",
-        min_value=1, max_value=50, step=1,
+        min_value=0.1, max_value=50.0, step=0.1, format="%.4f",
         key="D", disabled=locked,
         help="Daily consumption rate.",
+    )
+
+    st.sidebar.markdown("### Trigger Threshold")
+    st.sidebar.number_input(
+        "Threshold — Trigger Floor (% of TC)",
+        min_value=1, max_value=99, step=1,
+        key="threshold_pct", disabled=locked,
+        help="Trigger fires when projected I ≤ (this %) × TC. Default 75.",
     )
 
     st.sidebar.markdown("### Day 0 Initial SIT")
 
     st.sidebar.number_input(
         "SIT[0] — Stock in Transit qty",
-        min_value=0, max_value=200, step=1,
+        min_value=0.0, max_value=200.0, step=0.1, format="%.4f",
         key="SIT_init", disabled=locked,
         help="Initial Stock in Transit quantity at Day 0.",
     )
@@ -167,8 +177,13 @@ def status_badge(color: str, label: str) -> str:
     )
 
 
+def _fmt(value: float) -> str:
+    return f"{value:.4f}"
+
+
 def render_status_dashboard(sim: Simulation) -> None:
     snap: DaySnapshot = sim.latest()
+    pct = int(round(sim.threshold_pct * 100))
 
     header_col, badge_col = st.columns([3, 1])
     with header_col:
@@ -184,31 +199,28 @@ def render_status_dashboard(sim: Simulation) -> None:
 
     if snap.day > 0:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Inventory Before Consumption", snap.I_before)
-        c2.metric(
-            "After Consumption", snap.I_after_consumption,
-            delta=-(snap.I_before - snap.I_after_consumption) or None,
-        )
-        c3.metric("Arrivals Today (SIT → I)", snap.arrivals_today)
+        c1.metric("Inventory Before Trigger", _fmt(snap.I_before))
+        c2.metric("After Arrivals", _fmt(snap.I_after_arrivals))
+        c3.metric("After Consumption", _fmt(snap.I_after_consumption))
 
     st.markdown("#### Current Metrics")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("I — Inventory", snap.I)
-    m2.metric("SIT_Total", snap.SIT_Total)
-    m3.metric("TC — Total Capacity", sim.TC)
+    m1.metric("I — Inventory", _fmt(snap.I))
+    m2.metric("SIT_Total", _fmt(snap.SIT_Total))
+    m3.metric("TC — Total Capacity", _fmt(sim.TC))
     trigger_str = "YES" if snap.triggered else "NO" if snap.day > 0 else "—"
     m4.metric("Trigger?", trigger_str)
 
     n1, n2, n3 = st.columns(3)
     n1.metric(
         f"Projected I (after {sim.TLT}d)",
-        f"{snap.projected_I:g}",
-        help="max(0, I − (LT+LW)·D) + sd(SIT, DD, I, LT+LW)",
+        _fmt(snap.projected_I),
+        help="Forward-simulated I over LT+LW days, processing arrivals then consumption each day.",
     )
     n2.metric(
-        "75% Floor",
-        f"{snap.floor_75:g}",
-        help="0.75 × TC — trigger fires when projected I drops to or below this floor.",
+        f"{pct}% Floor",
+        _fmt(snap.threshold_floor),
+        help=f"{pct}% × TC — trigger fires when projected I drops to or below this floor.",
     )
     breach_text = "YES" if snap.floor_breached and snap.day > 0 else "NO" if snap.day > 0 else "—"
     n3.metric("Floor Breached?", breach_text)
@@ -216,6 +228,7 @@ def render_status_dashboard(sim: Simulation) -> None:
 
 def render_dispatch_info(sim: Simulation) -> None:
     snap: DaySnapshot = sim.latest()
+    pct = int(round(sim.threshold_pct * 100))
     if snap.day == 0:
         st.info("Simulation has not started. Click **Next Day** to execute Day 1.")
         if snap.pending_orders:
@@ -225,24 +238,19 @@ def render_dispatch_info(sim: Simulation) -> None:
     st.markdown("#### Dispatch Information")
     if snap.dispatch_status == "DISPATCHED":
         st.warning(
-            f"📦 Order Triggered & **DISPATCHED** — Q = {snap.Q}. "
+            f"📦 Order Triggered & **DISPATCHED** — Q = {_fmt(snap.Q)}. "
             f"Will arrive when DD reaches **{sim.TLT}**."
-        )
-    elif snap.dispatch_status == "NOT_NEEDED":
-        st.info(
-            "ℹ️ Trigger condition met but **dispatch skipped** — computed Q = 0 "
-            "(in-flight SIT already covers projected demand)."
         )
     elif snap.dispatch_status == "NO_TRIGGER":
         st.success(
-            f"✅ No Order Needed — projected I ({snap.projected_I:g}) "
-            f"> 75% floor ({snap.floor_75:g})."
+            f"✅ No Order Needed — projected I ({_fmt(snap.projected_I)}) "
+            f"> {pct}% floor ({_fmt(snap.threshold_floor)})."
         )
 
     if snap.arrivals_today > 0:
         idx_str = ", ".join(f"#{i}" for i in snap.arrival_orders)
         st.success(
-            f"🛬 Arrived today: {snap.arrivals_today} unit(s) from order(s) {idx_str} "
+            f"🛬 Arrived today: {_fmt(snap.arrivals_today)} unit(s) from order(s) {idx_str} "
             f"(now in I)."
         )
 
@@ -255,7 +263,7 @@ def _render_pending_table(snap: DaySnapshot) -> None:
         rows = [
             {
                 "Order Index": p.order_index,
-                "Quantity": p.qty,
+                "Quantity": _fmt(p.qty),
                 "Days in Transit (DD)": p.days_in_transit,
                 "Days Remaining": p.days_remaining,
             }
@@ -267,43 +275,45 @@ def _render_pending_table(snap: DaySnapshot) -> None:
 
 
 def render_chart(sim: Simulation) -> None:
+    pct = int(round(sim.threshold_pct * 100))
     st.markdown("#### Inventory Over Time")
     history = sim.history
     days = [s.day for s in history]
     i_values = [s.I for s in history]
     i_plus_sit = [s.I + s.SIT_Total for s in history]
 
-    floor_75 = sim.floor_75
+    threshold_floor = sim.threshold_floor
     floor_50 = sim.floor_50
     tc = sim.TC
 
     fig = go.Figure()
 
-    # Color zones based on I (status driver)
-    chart_top = max(tc + 2, max(i_plus_sit + [floor_75]) + 2)
+    chart_top = max(tc + 2, max(i_plus_sit + [threshold_floor]) + 2)
+
+    # Color zones (option a): GREEN > threshold, YELLOW between 50% and threshold, RED ≤ 50%
     fig.add_hrect(
-        y0=floor_75, y1=chart_top,
+        y0=threshold_floor, y1=chart_top,
         fillcolor="green", opacity=0.08, line_width=0,
-        annotation_text="Safe (I > 75% TC)", annotation_position="top left",
+        annotation_text=f"Safe (I > {pct}% TC)", annotation_position="top left",
     )
-    fig.add_hrect(
-        y0=floor_50, y1=floor_75,
-        fillcolor="yellow", opacity=0.12, line_width=0,
-        annotation_text="Warning (50%–75%)", annotation_position="top left",
-    )
+    if threshold_floor > floor_50:
+        fig.add_hrect(
+            y0=floor_50, y1=threshold_floor,
+            fillcolor="yellow", opacity=0.12, line_width=0,
+            annotation_text=f"Warning (50%–{pct}%)", annotation_position="top left",
+        )
     fig.add_hrect(
         y0=0, y1=floor_50,
         fillcolor="red", opacity=0.08, line_width=0,
         annotation_text="Critical (≤ 50%)", annotation_position="bottom left",
     )
 
-    # 75% TC floor line
+    # Threshold floor line
     fig.add_hline(
-        y=floor_75, line_dash="dash", line_color="#f97316",
-        annotation_text=f"75% Floor = {floor_75:g}", annotation_position="right",
+        y=threshold_floor, line_dash="dash", line_color="#f97316",
+        annotation_text=f"{pct}% Floor = {threshold_floor:.4f}", annotation_position="right",
     )
 
-    # I (solid blue)
     fig.add_trace(go.Scatter(
         x=days, y=i_values,
         name="I (On Hand)",
@@ -312,7 +322,6 @@ def render_chart(sim: Simulation) -> None:
         marker=dict(size=7),
     ))
 
-    # I + SIT_Total (dotted blue)
     fig.add_trace(go.Scatter(
         x=days, y=i_plus_sit,
         name="I + SIT_Total (committed)",
@@ -320,7 +329,6 @@ def render_chart(sim: Simulation) -> None:
         line=dict(color="#0ea5e9", width=2, dash="dot"),
     ))
 
-    # Trigger markers (red dots) — plotted on the I line
     trig_days = [s.day for s in history if s.triggered]
     trig_vals = [s.I for s in history if s.triggered]
     if trig_days:
@@ -332,7 +340,6 @@ def render_chart(sim: Simulation) -> None:
                         line=dict(color="white", width=2)),
         ))
 
-    # Arrival markers (green dots) — plotted on the I line
     arr_days = [s.day for s in history if s.arrivals_today > 0]
     arr_vals = [s.I for s in history if s.arrivals_today > 0]
     if arr_days:
@@ -357,26 +364,25 @@ def render_chart(sim: Simulation) -> None:
 
 
 def render_summary_table(sim: Simulation) -> None:
+    pct = int(round(sim.threshold_pct * 100))
     st.markdown("#### 20-Day Summary")
     rows = []
     for s in sim.history:
         if s.day == 0:
             continue
         if s.dispatch_status == "DISPATCHED":
-            action = f"DISPATCHED Q={s.Q}"
-        elif s.dispatch_status == "NOT_NEEDED":
-            action = "NOT NEEDED (Q=0)"
+            action = f"DISPATCHED Q={s.Q:.4f}"
         else:
             action = "—"
         rows.append({
             "Day": s.day,
-            "I": s.I,
-            "SIT_Total": s.SIT_Total,
-            f"Projected I (+{sim.TLT}d)": round(s.projected_I, 2),
-            "75% Floor": round(s.floor_75, 2),
+            "I": round(s.I, 4),
+            "SIT_Total": round(s.SIT_Total, 4),
+            f"Projected I (+{sim.TLT}d)": round(s.projected_I, 4),
+            f"{pct}% Floor": round(s.threshold_floor, 4),
             "Floor Breached?": "YES" if s.floor_breached else "NO",
             "Trigger": "YES" if s.triggered else "NO",
-            "Q": s.Q if s.Q is not None else "—",
+            "Q": round(s.Q, 4) if s.Q is not None else "—",
             "Action": action,
             "Status": s.status_label,
         })
@@ -407,25 +413,23 @@ def render_main() -> None:
     sim: Simulation | None = st.session_state.sim
 
     if sim is None:
+        threshold = int(st.session_state.threshold_pct)
         st.info(
             "👈 Set parameters and click **Start Simulation** to begin. "
             "A Day 0 snapshot will appear once started."
         )
         with st.expander("📐 Formulas & Rules", expanded=True):
             st.markdown(
-                """
-- **75% Floor** = 0.75 × TC  *(replaces the legacy ROP)*
-- **Projected I** = max(0, I − (LT+LW)·D) + sd(SIT, DD, I, LT+LW)
-- **Trigger** when Projected I ≤ 75% Floor
-- **Q** = max(0, min(term1, term2)) where
-    - term1 = TC − max(0, I + SIT_Total − (LT+LW)·D)
-    - term2 = TC − max(0, I − (LT+LW)·D) − sd(SIT, DD, I, LT+LW)
-- If **Q = 0**, dispatch is skipped (no empty SIT entry).
+                f"""
+- **Threshold Floor** = (Threshold % / 100) × TC  *(currently {threshold}% × TC)*
+- **Projected I** = forward-simulate I over (LT+LW) days, processing arrivals then consumption each day (no new dispatch).
+- **Trigger** when Projected I ≤ Threshold Floor
+- **Q** = max(0, TC − Projected I)
 - Orders are tracked in dictionaries `SIT[k]` (qty) and `DD[k]` (days in transit).
-  An order arrives when `DD[k] == LT+LW`.
-- Daily flow: **Consume → Process Arrivals → Trigger Check → Dispatch.**
-- Status color (driven by **I** alone):
-  🟢 I > 0.75·TC · 🟡 0.50·TC < I ≤ 0.75·TC · 🔴 I ≤ 0.50·TC or I = 0.
+  An order arrives when `DD[k] == LT+LW`. New dispatch reuses slot `j` if `SIT[j] == 0`, else `j` is incremented.
+- Daily flow: **Trigger Check → Dispatch → Process Arrivals → Consume.**
+- Status color (driven by **I** alone, with configurable threshold):
+  🟢 I > threshold·TC · 🟡 0.50·TC < I ≤ threshold·TC · 🔴 I ≤ 0.50·TC or I = 0.
                 """
             )
         return
