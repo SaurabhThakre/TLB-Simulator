@@ -199,9 +199,9 @@ def render_status_dashboard(sim: Simulation) -> None:
 
     if snap.day > 0:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Inventory Before Trigger", _fmt(snap.I_before))
-        c2.metric("After Arrivals", _fmt(snap.I_after_arrivals))
-        c3.metric("After Consumption", _fmt(snap.I_after_consumption))
+        c1.metric("Day Start (Before Consume)", _fmt(snap.I_before))
+        c2.metric("After Consumption", _fmt(snap.I_after_consumption))
+        c3.metric("After Arrivals", _fmt(snap.I_after_arrivals))
 
     st.markdown("#### Current Metrics")
     m1, m2, m3, m4 = st.columns(4)
@@ -427,7 +427,8 @@ def render_main() -> None:
 - **Q** = max(0, TC − Projected I)
 - Orders are tracked in dictionaries `SIT[k]` (qty) and `DD[k]` (days in transit).
   An order arrives when `DD[k] == LT+LW`. New dispatch reuses slot `j` if `SIT[j] == 0`, else `j` is incremented.
-- Daily flow: **Trigger Check → Dispatch → Process Arrivals → Consume.**
+- Daily flow: **Consume → Process Arrivals → Trigger Check → Dispatch.**
+- New dispatches start with `DD=1` so the order arrives exactly `LT+LW` days later.
 - Status color (driven by **I** alone, with configurable threshold):
   🟢 I > threshold·TC · 🟡 0.50·TC < I ≤ threshold·TC · 🔴 I ≤ 0.50·TC or I = 0.
                 """

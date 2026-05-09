@@ -105,12 +105,17 @@ class Simulation:
         return sum(self.SIT.values())
 
     def _projected_inventory(self) -> float:
-        """Forward-simulate I over TLT days assuming no new dispatch."""
+        """Forward-simulate I over TLT days assuming no new dispatch.
+
+        Mirrors the daily flow: Consume -> Arrivals each iteration.
+        """
         sim_I = self.I
         sim_SIT = dict(self.SIT)
         sim_DD = dict(self.DD)
 
         for _ in range(self.TLT):
+            if sim_I > 0:
+                sim_I = max(0.0, sim_I - self.D)
             for k in list(sim_DD.keys()):
                 if sim_SIT.get(k, 0) == 0:
                     continue
@@ -120,7 +125,6 @@ class Simulation:
                     sim_SIT[k] = 0
                 elif sim_SIT.get(k, 0) != 0:
                     sim_DD[k] += 1
-            sim_I = max(0.0, sim_I - self.D)
 
         return sim_I
 
@@ -188,20 +192,10 @@ class Simulation:
         day = self.current_day
         I_before = self.I
 
-        # Step 1: Trigger check + Dispatch
-        proj_I = self._projected_inventory()
-        triggered = proj_I <= self.threshold_floor
-
-        Q_value: Optional[float] = None
-        dispatch_status = "NO_TRIGGER"
-        if triggered:
-            Q_raw = max(0.0, self.TC - proj_I)
-            if self.SIT.get(self.j, 0) != 0:
-                self.j += 1
-            self.SIT[self.j] = Q_raw
-            self.DD[self.j] = 0
-            Q_value = Q_raw
-            dispatch_status = "DISPATCHED"
+        # Step 1: Daily consumption
+        if self.I > 0:
+            self.I = max(0.0, self.I - self.D)
+        I_after_consumption = self.I
 
         # Step 2: Process SIT arrivals (check, then increment)
         arrivals_today = 0.0
@@ -219,10 +213,23 @@ class Simulation:
                 self.DD[k] += 1
         I_after_arrivals = self.I
 
-        # Step 3: Daily consumption
-        if self.I > 0:
-            self.I = max(0.0, self.I - self.D)
-        I_after_consumption = self.I
+        # Step 3: Trigger check + Dispatch
+        # New dispatch DD initialized to 1 so arrival lands on day X+TLT
+        # (with C->A->T flow, dispatch happens after the day's arrival step,
+        # so DD=1 puts it one increment ahead).
+        proj_I = self._projected_inventory()
+        triggered = proj_I <= self.threshold_floor
+
+        Q_value: Optional[float] = None
+        dispatch_status = "NO_TRIGGER"
+        if triggered:
+            Q_raw = max(0.0, self.TC - proj_I)
+            if self.SIT.get(self.j, 0) != 0:
+                self.j += 1
+            self.SIT[self.j] = Q_raw
+            self.DD[self.j] = 1
+            Q_value = Q_raw
+            dispatch_status = "DISPATCHED"
 
         color, label = self._classify()
         snapshot = DaySnapshot(
