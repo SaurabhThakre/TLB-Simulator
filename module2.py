@@ -89,6 +89,8 @@ def _render_sku_master() -> Optional[pd.DataFrame]:
         except Exception as exc:  # noqa: BLE001
             st.error(f"Could not read the Excel file: {exc}")
             return None
+        # Normalize column names: strip whitespace, collapse newlines/multiple spaces
+        df.columns = [" ".join(col.split()) for col in df.columns]
         missing = [c for c in REQUIRED_COLS if c not in df.columns]
         if missing:
             st.error(f"SKU Master is missing required columns: {', '.join(missing)}")
