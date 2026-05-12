@@ -39,10 +39,16 @@ def _init_state() -> None:
     st.session_state.setdefault("m2_primary_q", 0.0)
     st.session_state.setdefault("m2_truck_pool", list(TRUCK_POOL_DEFAULTS))
 
-    # Initialize top-up defaults (only if not already set)
-    for idx, row in enumerate(TOPUP_DEFAULTS):
-        for field, val in row.items():
-            st.session_state.setdefault(f"m2_topup_{idx}_{field}", val)
+    # One-time migration: force-apply the top-up defaults once. Existing
+    # sessions may already hold these keys stuck at 0 (created by an earlier
+    # build's number_input widgets before defaults were wired in), which a
+    # plain setdefault would never overwrite. After this runs once, user edits
+    # are preserved across reruns and tab switches.
+    if not st.session_state.get("m2_defaults_applied"):
+        st.session_state["m2_defaults_applied"] = True
+        for idx, row in enumerate(TOPUP_DEFAULTS):
+            for field, val in row.items():
+                st.session_state[f"m2_topup_{idx}_{field}"] = val
 
 
 # --------------------------------------------------------------------------
@@ -159,12 +165,6 @@ def _render_topup_table(lookup: Dict[str, dict]) -> None:
         )
 
     for idx in range(3):
-        # Ensure row defaults are set before rendering widgets
-        for field, value in TOPUP_DEFAULTS[idx].items():
-            key = f"m2_topup_{idx}_{field}"
-            if key not in st.session_state:
-                st.session_state[key] = value
-
         st.markdown(f"**Row {idx + 1}**")
         sku_key = f"m2_topup_{idx}_sku"
         if filtered:
@@ -485,14 +485,6 @@ def render() -> None:
     if not lookup:
         st.error("The SKU Master contains no rows.")
         st.stop()
-
-    # Ensure top-up defaults are set before any widgets render them.
-    # Uses per-key check so user edits are never overwritten.
-    for i, defaults in enumerate(TOPUP_DEFAULTS):
-        for field, value in defaults.items():
-            key = f"m2_topup_{i}_{field}"
-            if key not in st.session_state:
-                st.session_state[key] = value
 
     st.divider()
     _render_primary_inputs(lookup)
