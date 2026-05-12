@@ -159,6 +159,12 @@ def _render_topup_table(lookup: Dict[str, dict]) -> None:
         )
 
     for idx in range(3):
+        # Ensure row defaults are set before rendering widgets
+        for field, value in TOPUP_DEFAULTS[idx].items():
+            key = f"m2_topup_{idx}_{field}"
+            if key not in st.session_state:
+                st.session_state[key] = value
+
         st.markdown(f"**Row {idx + 1}**")
         sku_key = f"m2_topup_{idx}_sku"
         if filtered:
