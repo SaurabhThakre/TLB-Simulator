@@ -6,7 +6,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import module2
 from simulation import TOTAL_DAYS, DaySnapshot, Simulation
+
+PAGE_M1 = "Module 1 — Dispatch Simulation"
+PAGE_M2 = "Module 2 — Truck Capacity Optimization"
 
 st.set_page_config(
     page_title="TLB Inventory Dispatch Simulator",
@@ -452,8 +456,13 @@ def render_main() -> None:
 
 def main() -> None:
     init_session_state()
-    render_sidebar()
-    render_main()
+    page = st.sidebar.radio("Navigation", [PAGE_M1, PAGE_M2], key="active_page")
+    st.sidebar.divider()
+    if page == PAGE_M1:
+        render_sidebar()
+        render_main()
+    else:
+        module2.render()
 
 
 if __name__ == "__main__":
