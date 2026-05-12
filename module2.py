@@ -61,7 +61,7 @@ def fmt(pallets: float, cases_per_pallet: float) -> str:
 def _build_lookup(df: pd.DataFrame) -> Dict[str, dict]:
     lookup: Dict[str, dict] = {}
     for _, row in df.iterrows():
-        label = f"{row['Material Code']} — {row['Material']}"
+        label = f"{row['Material Code']} — {row['Material']} ({int(row['Cases/Bags per Pallet'])} cases/Pallet)"
         lookup[label] = {
             "code": row["Material Code"],
             "material": row["Material"],
@@ -474,6 +474,14 @@ def render() -> None:
     if not lookup:
         st.error("The SKU Master contains no rows.")
         st.stop()
+
+    # Ensure top-up defaults are set before any widgets render them.
+    # Uses per-key check so user edits are never overwritten.
+    for i, defaults in enumerate(TOPUP_DEFAULTS):
+        for field, value in defaults.items():
+            key = f"m2_topup_{i}_{field}"
+            if key not in st.session_state:
+                st.session_state[key] = value
 
     st.divider()
     _render_primary_inputs(lookup)
