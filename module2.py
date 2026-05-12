@@ -35,11 +35,11 @@ INT_FIELDS = ["LT", "LW"]                               # int, step 1
 # --------------------------------------------------------------------------
 
 def _init_state() -> None:
-    if "m2_initialized" in st.session_state:
-        return
-    st.session_state["m2_initialized"] = True
-    st.session_state["m2_primary_q"] = 0.0
-    st.session_state["m2_truck_pool"] = list(TRUCK_POOL_DEFAULTS)
+    # Initialize primary inputs (only if not already set)
+    st.session_state.setdefault("m2_primary_q", 0.0)
+    st.session_state.setdefault("m2_truck_pool", list(TRUCK_POOL_DEFAULTS))
+
+    # Initialize top-up defaults (only if not already set)
     for idx, row in enumerate(TOPUP_DEFAULTS):
         for field, val in row.items():
             st.session_state.setdefault(f"m2_topup_{idx}_{field}", val)
