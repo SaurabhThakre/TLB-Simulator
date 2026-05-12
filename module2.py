@@ -61,12 +61,17 @@ def fmt(pallets: float, cases_per_pallet: float) -> str:
 def _build_lookup(df: pd.DataFrame) -> Dict[str, dict]:
     lookup: Dict[str, dict] = {}
     for _, row in df.iterrows():
-        label = f"{row['Material Code']} — {row['Material']} ({int(row['Cases/Bags per Pallet'])} cases/Pallet)"
+        cpp = row["Cases/Bags per Pallet"]
+        # Skip rows with missing Cases/Bags per Pallet
+        if pd.isna(cpp):
+            continue
+        cpp = float(cpp)
+        label = f"{row['Material Code']} — {row['Material']} ({int(cpp)} cases/Pallet)"
         lookup[label] = {
             "code": row["Material Code"],
             "material": row["Material"],
             "type": str(row["Dry/Wet"]).strip(),
-            "cpp": float(row["Cases/Bags per Pallet"]),
+            "cpp": cpp,
         }
     return lookup
 
