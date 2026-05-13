@@ -468,6 +468,7 @@ def main() -> None:
     elif page == PAGE_M2:
         module2.render()
     else:
+        module3.render_sidebar()
         module3.render()
 
 

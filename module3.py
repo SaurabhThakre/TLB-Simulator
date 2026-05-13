@@ -8,10 +8,11 @@ import os
 from typing import Dict, List
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 EPS = 1e-9
-MAX_CYCLES = 10
+MAX_CYCLES = 50
 MIN_THRESHOLD_DEFAULT = 2.0
 DYNAMIC_DEMAND_DEFAULT = 1.0
 DYNAMIC_DAYS_DEFAULT = 1
@@ -431,50 +432,128 @@ def _run_cycle() -> None:
 
 
 # --------------------------------------------------------------------------
-# Controls
+# Sidebar controls (called from app.py when Module 3 is active)
 # --------------------------------------------------------------------------
 
-def _render_controls() -> None:
-    st.subheader("Simulation Controls")
-    cycle = st.session_state["m3_current_cycle"]
-    complete = st.session_state["m3_sim_complete"]
+def render_sidebar() -> None:
+    cycle = st.session_state.get("m3_current_cycle", 0)
+    complete = st.session_state.get("m3_sim_complete", False)
 
-    c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
-    with c1:
-        if st.button(
-            "▶ Start / Run Cycle 1",
-            type="primary",
-            disabled=cycle > 0,
-            use_container_width=True,
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🏭 Simulation Controls")
+
+    if st.sidebar.button(
+        "▶ Start / Run Cycle 1",
+        type="primary",
+        disabled=cycle > 0,
+        use_container_width=True,
+    ):
+        _run_cycle()
+
+    if st.sidebar.button(
+        "⏭ Next Cycle",
+        disabled=(cycle == 0) or complete,
+        use_container_width=True,
+    ):
+        _run_cycle()
+
+    if st.sidebar.button(
+        "↺ Reset Simulation",
+        use_container_width=True,
+    ):
+        for k in (
+            "m3_cycle_results", "m3_current_cycle",
+            "m3_new_queue", "m3_new_remaining",
+            "m3_sim_complete",
         ):
-            _run_cycle()
-    with c2:
-        if st.button(
-            "⏭ Next Cycle",
-            disabled=(cycle == 0) or complete,
-            use_container_width=True,
-        ):
-            _run_cycle()
-    with c3:
-        if st.button(
-            "↺ Reset Simulation",
-            use_container_width=True,
-        ):
-            for k in (
-                "m3_cycle_results", "m3_current_cycle",
-                "m3_new_queue", "m3_new_remaining",
-                "m3_sim_complete",
-            ):
-                st.session_state.pop(k, None)
-            st.rerun()
-    with c4:
-        if cycle == 0:
-            st.caption("No cycles run yet.")
-        else:
-            st.markdown(f"**Cycle {cycle} of {MAX_CYCLES}**")
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    st.sidebar.markdown("---")
+    if cycle == 0:
+        st.sidebar.caption("No cycles run yet.")
+    else:
+        st.sidebar.markdown(f"**Cycle {cycle} of {MAX_CYCLES}**")
+        st.sidebar.progress(cycle / MAX_CYCLES)
 
     if complete:
-        st.success("✅ Simulation Complete — All 10 cycles have been run.")
+        st.sidebar.success(f"✅ Simulation Complete — all {MAX_CYCLES} cycles run.")
+
+
+# --------------------------------------------------------------------------
+# Bar chart — live snapshot of remaining dispatch requirements
+# --------------------------------------------------------------------------
+
+def _render_bar_chart() -> None:
+    st.subheader("📊 Dispatch Requirements — Live View")
+
+    branches = st.session_state["m3_branch_data"]
+    new_rem = st.session_state["m3_new_remaining"]
+    results = st.session_state["m3_cycle_results"]
+    cycle = st.session_state["m3_current_cycle"]
+
+    last_served: set = set()
+    if results:
+        last_served = set(results[-1]["result"]["served_ids"])
+
+    x_labels: List[str] = []
+    y_values: List[float] = []
+    bar_colors: List[str] = []
+    hover_texts: List[str] = []
+
+    for b in branches:
+        bid = b["id"]
+        original_qk = float(b["qk"])
+        remaining = float(new_rem.get(bid, original_qk)) if new_rem else original_qk
+
+        x_labels.append(bid)
+        y_values.append(remaining)
+        hover_texts.append(
+            f"<b>{bid} — {b['name']}</b><br>"
+            f"Original: {original_qk:.2f} MT<br>"
+            f"Remaining: {remaining:.2f} MT"
+        )
+
+        if remaining <= EPS:
+            bar_colors.append("#9e9e9e")    # grey — fulfilled
+        elif bid in last_served:
+            bar_colors.append("#4caf50")    # green — served last cycle
+        else:
+            bar_colors.append("#2196f3")    # blue — queued / unserved
+
+    fig = go.Figure(go.Bar(
+        x=x_labels,
+        y=y_values,
+        marker_color=bar_colors,
+        text=[f"{v:.1f}" for v in y_values],
+        textposition="outside",
+        hovertext=hover_texts,
+        hoverinfo="text",
+        cliponaxis=False,
+    ))
+
+    if cycle == 0:
+        title = "Initial Dispatch Requirements (all branches)"
+    else:
+        title = f"Remaining Dispatch Requirements — after Cycle {cycle} of {MAX_CYCLES}"
+
+    fig.update_layout(
+        title=dict(text=title, x=0, xanchor="left"),
+        xaxis_title="Branch",
+        yaxis_title="Remaining (MT)",
+        height=440,
+        margin=dict(l=40, r=40, t=70, b=60),
+        showlegend=False,
+        plot_bgcolor="white",
+        yaxis=dict(gridcolor="#e0e0e0"),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "🔵 Blue = Queued / Unserved  |  "
+        "🟢 Green = Served in last cycle  |  "
+        "⬜ Grey = Fulfilled (remaining ≈ 0)"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -648,8 +727,8 @@ def render() -> None:
     st.title("\U0001F3ED Module 3 — Inventory Allocation Logic")
     st.caption(
         "Simulate proportional stock distribution across branch warehouses "
-        "under scarcity. Compares New Logic (Eligible Set Expansion) vs "
-        "Old Logic (First-Come-First-Served) over up to 10 cycles."
+        "under scarcity using Eligible Set Expansion over up to "
+        f"{MAX_CYCLES} cycles. Use the sidebar controls to run cycles."
     )
 
     _render_clear_button()
@@ -658,7 +737,13 @@ def render() -> None:
     st.divider()
     _render_branch_table()
     st.divider()
-    _render_controls()
+    _render_bar_chart()
+
+    if st.session_state["m3_sim_complete"]:
+        st.success(
+            f"✅ Simulation Complete — all {MAX_CYCLES} cycles have been run. "
+            "Click **↺ Reset Simulation** in the sidebar to start over."
+        )
 
     if st.session_state["m3_cycle_results"]:
         st.divider()
