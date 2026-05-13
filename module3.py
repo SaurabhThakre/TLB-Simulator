@@ -243,7 +243,7 @@ def _render_branch_table() -> None:
 
     c1, c2, _ = st.columns([1, 1, 4])
     with c1:
-        if st.button("+ Add Branch", key="m3_btn_add", use_container_width=True):
+        if st.button("+ Add Branch", use_container_width=True):
             n = len(st.session_state["m3_branch_data"]) + 1
             st.session_state["m3_branch_data"].append({
                 "id": f"B{n:02d}",
@@ -256,7 +256,6 @@ def _render_branch_table() -> None:
         disable_remove = len(st.session_state["m3_branch_data"]) <= 1
         if st.button(
             "× Remove Last Branch",
-            key="m3_btn_remove",
             disabled=disable_remove,
             use_container_width=True,
         ):
