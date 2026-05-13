@@ -373,17 +373,16 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         new_remaining[bid] = max(0.0, new_remaining[bid] - alloc)
     st.session_state["m3_new_remaining"] = new_remaining
 
-    # New queue: unserved (re-sorted by remaining desc within unserved group)
-    # at top, served at bottom — preserving the rotation.
-    unserved_sorted = sorted(
-        unserved_ids, key=lambda b: new_remaining.get(b, 0.0), reverse=True
-    )
-    st.session_state["m3_new_queue"] = unserved_sorted + served_ids
+    # New queue: unserved (in their existing queue order) at top, served at
+    # bottom.  Do NOT re-sort unserved by remaining — that would let
+    # previously-served high-remaining branches jump back to the top and
+    # break the rotation across cycles.
+    st.session_state["m3_new_queue"] = list(unserved_ids) + served_ids
 
     return {
         "rows": rows,
         "served_ids": served_ids,
-        "unserved_ids": unserved_sorted,
+        "unserved_ids": list(unserved_ids),
         "served_ids_moved_to_bottom": served_ids,
         "residual": max(0.0, residual),
         "total_allocated": sum(allocations.values()),
