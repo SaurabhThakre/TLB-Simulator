@@ -135,7 +135,7 @@ def get_effective_threshold() -> float:
 # --------------------------------------------------------------------------
 
 def _render_clear_button() -> None:
-    if st.button("↺ Clear / Reset to Defaults", key="m3_btn_clear_all"):
+    if st.button("↺ Clear / Reset to Defaults"):
         try:
             os.remove(STATE_FILE)
         except FileNotFoundError:
