@@ -15,6 +15,7 @@ FILL_THRESHOLD = 0.90
 TRUCK_POOL_DEFAULTS = [9, 13, 18, 25, 30]
 
 STATE_FILE = "m2_state.json"
+SCHEMA_VERSION = 2          # bump to invalidate stale state files
 PERSIST_PREFIX = "m2_"
 PERSIST_SKIP = {"m2_results", "m2_defaults_applied"}
 
@@ -41,7 +42,7 @@ INT_FIELDS = ["LT", "LW"]                               # int, step 1
 # --------------------------------------------------------------------------
 
 def save_state() -> None:
-    data = {}
+    data: dict = {"_schema_version": SCHEMA_VERSION}
     for k, v in st.session_state.items():
         if not isinstance(k, str) or not k.startswith(PERSIST_PREFIX):
             continue
@@ -60,6 +61,7 @@ def save_state() -> None:
 
 
 def load_state() -> None:
+    """Load persisted state from disk, overriding defaults with saved user values."""
     if not os.path.exists(STATE_FILE):
         return
     try:
@@ -69,20 +71,29 @@ def load_state() -> None:
         return
     if not isinstance(data, dict):
         return
+    # Ignore stale files written by older code (no version or wrong version).
+    if data.get("_schema_version") != SCHEMA_VERSION:
+        return
     for k, v in data.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+        if k.startswith("_"):
+            continue  # skip meta keys like _schema_version
+        # Direct assignment so saved user values override the setdefault values
+        # that _init_state() already applied.
+        st.session_state[k] = v
 
 
 def _init_state() -> None:
-    load_state()
-
+    # 1. Apply hardcoded defaults first (only fills keys absent from session_state).
     st.session_state.setdefault("m2_primary_q", 0.0)
     st.session_state.setdefault("m2_truck_pool", list(TRUCK_POOL_DEFAULTS))
 
     for idx, row in enumerate(TOPUP_DEFAULTS):
         for field, val in row.items():
             st.session_state.setdefault(f"m2_topup_{idx}_{field}", val)
+
+    # 2. Load from disk — overwrites defaults with user-saved values.
+    #    Stale files (wrong SCHEMA_VERSION) are silently ignored.
+    load_state()
 
 
 # --------------------------------------------------------------------------
@@ -190,6 +201,7 @@ def _render_primary_inputs(lookup: Dict[str, dict]) -> None:
     st.multiselect(
         "Available Truck Sizes (MT)",
         options=TRUCK_POOL_DEFAULTS,
+        default=st.session_state.get("m2_truck_pool", list(TRUCK_POOL_DEFAULTS)),
         key="m2_truck_pool",
         on_change=save_state,
     )
