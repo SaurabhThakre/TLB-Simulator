@@ -65,6 +65,7 @@ def advance_day() -> None:
     sim: Simulation = st.session_state.sim
     if sim is not None and sim.can_advance():
         sim.advance_day()
+        st.session_state.chart_window_start = None  # Reset chart to latest window
 
 
 def render_sidebar() -> None:
@@ -367,7 +368,19 @@ def render_chart(sim: Simulation) -> None:
                         line=dict(color="white", width=2)),
         ))
 
-    x_start, x_end = get_chart_window(sim.current_day)
+    # Initialize manual window position state
+    if "chart_window_start" not in st.session_state:
+        st.session_state.chart_window_start = None
+
+    # Determine x-axis range: auto-scroll to latest or show manual position
+    if sim.current_day > 0 and st.session_state.chart_window_start is not None:
+        # User has manually scrolled — show that window
+        x_start = st.session_state.chart_window_start
+        x_end = min(x_start + CHART_WINDOW - 1, sim.current_day)
+    else:
+        # Auto-scroll to latest window
+        x_start, x_end = get_chart_window(sim.current_day)
+
     fig.update_layout(
         xaxis=dict(title="Day", range=[x_start - 0.5, x_end + 0.5], dtick=1),
         yaxis=dict(title="Inventory Level (days)", range=[0, chart_top]),
@@ -378,6 +391,25 @@ def render_chart(sim: Simulation) -> None:
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # Scrollbar for manual window navigation (below chart)
+    if sim.current_day > 0:
+        max_window_start = max(1, sim.current_day - CHART_WINDOW + 1)
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            st.slider(
+                "🔍 Navigate history (window start day):",
+                min_value=1,
+                max_value=max_window_start,
+                value=st.session_state.chart_window_start or max_window_start,
+                step=1,
+                key="chart_window_start",
+                label_visibility="collapsed",
+            )
+        with col2:
+            if st.button("⏭ Latest", use_container_width=True, key="reset_chart_window"):
+                st.session_state.chart_window_start = None
+                st.rerun()
 
 
 def render_summary_table(sim: Simulation) -> None:
