@@ -415,7 +415,11 @@ def render_chart(sim: Simulation) -> None:
             )
         with col2:
             if st.button("⏭ Latest", use_container_width=True, key="reset_chart_window"):
-                st.session_state["chart_window_start"] = max_window_start
+                # Cannot assign to a widget key after it is instantiated;
+                # delete the key instead — the seeding block sets it to
+                # max_window_start on the next render.
+                if "chart_window_start" in st.session_state:
+                    del st.session_state["chart_window_start"]
                 st.rerun()
 
 
