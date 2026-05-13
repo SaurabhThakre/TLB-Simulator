@@ -25,9 +25,7 @@ PERSIST_SKIP = {
     "m3_defaults_applied",
     "m3_current_cycle",
     "m3_new_queue",
-    "m3_old_order",
     "m3_new_remaining",
-    "m3_old_remaining",
     "m3_sim_complete",
     # Internal Streamlit data_editor diff-state; persisting it double-applies edits.
     "m3_branch_editor",
@@ -111,9 +109,7 @@ def _init_state() -> None:
     st.session_state.setdefault("m3_current_cycle", 0)
     st.session_state.setdefault("m3_cycle_results", [])
     st.session_state.setdefault("m3_new_queue", [])
-    st.session_state.setdefault("m3_old_order", [])
     st.session_state.setdefault("m3_new_remaining", {})
-    st.session_state.setdefault("m3_old_remaining", {})
     st.session_state.setdefault("m3_sim_complete", False)
 
     # 3. Override persistent inputs with saved values.
@@ -271,20 +267,15 @@ def _render_branch_table() -> None:
 def _initialise_simulation() -> None:
     branches = st.session_state["m3_branch_data"]
     new_rem: Dict[str, float] = {}
-    old_rem: Dict[str, float] = {}
     for b in branches:
-        qk = float(b["qk"])
-        new_rem[b["id"]] = qk
-        old_rem[b["id"]] = qk
+        new_rem[b["id"]] = float(b["qk"])
 
     eligible = [b for b in branches if float(b["qk"]) > EPS]
     eligible_sorted = sorted(eligible, key=lambda b: float(b["qk"]), reverse=True)
     ordered_ids = [b["id"] for b in eligible_sorted]
 
     st.session_state["m3_new_remaining"] = new_rem
-    st.session_state["m3_old_remaining"] = old_rem
     st.session_state["m3_new_queue"] = list(ordered_ids)
-    st.session_state["m3_old_order"] = list(ordered_ids)
 
 
 def _build_row(
@@ -314,14 +305,17 @@ def _run_new_logic(P: float, threshold: float) -> dict:
     new_remaining: Dict[str, float] = st.session_state["m3_new_remaining"]
     queue: List[str] = st.session_state["m3_new_queue"]
 
+    # Preserve queue order: unserved branches are at the top (from previous
+    # cycle's rotation), served branches are at the bottom.  Do NOT re-sort by
+    # remaining here — that would undo the rotation and let previously-served
+    # high-remaining branches jump back to the front.
     active = [bid for bid in queue if new_remaining.get(bid, 0.0) > EPS]
-    active_sorted = sorted(active, key=lambda b: new_remaining[b], reverse=True)
 
     k_star = 0
     no_branch_can_be_served = False
 
-    for k in range(1, len(active_sorted) + 1):
-        top_k = active_sorted[:k]
+    for k in range(1, len(active) + 1):
+        top_k = active[:k]
         total_q = sum(new_remaining[b] for b in top_k)
         if total_q <= EPS:
             break
@@ -332,14 +326,14 @@ def _run_new_logic(P: float, threshold: float) -> dict:
             if k_star == 0:
                 no_branch_can_be_served = True
             break
-        if k == len(active_sorted):
+        if k == len(active):
             k_star = k
 
     warning = None
     allocations: Dict[str, float] = {}
     served_ids: List[str] = []
 
-    if not active_sorted:
+    if not active:
         warning = "All branches already fulfilled. No allocation needed this cycle."
         residual = P
     elif no_branch_can_be_served:
@@ -348,7 +342,7 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         )
         residual = P
     else:
-        served_ids = list(active_sorted[:k_star])
+        served_ids = list(active[:k_star])
         total_q_star = sum(new_remaining[b] for b in served_ids)
         if total_q_star <= EPS:
             allocations = {}
@@ -359,7 +353,8 @@ def _run_new_logic(P: float, threshold: float) -> dict:
                 allocations[bid] = min(raw, new_remaining[bid])
             residual = P - sum(allocations.values())
 
-    unserved_ids = [bid for bid in active_sorted if bid not in set(served_ids)]
+    served_set = set(served_ids)
+    unserved_ids = [bid for bid in active if bid not in served_set]
 
     # Per-branch rows for display, in canonical branch_data order.
     rows = []
@@ -378,7 +373,8 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         new_remaining[bid] = max(0.0, new_remaining[bid] - alloc)
     st.session_state["m3_new_remaining"] = new_remaining
 
-    # New queue: unserved (re-sorted by remaining desc) + served (in their served order).
+    # New queue: unserved (re-sorted by remaining desc within unserved group)
+    # at top, served at bottom — preserving the rotation.
     unserved_sorted = sorted(
         unserved_ids, key=lambda b: new_remaining.get(b, 0.0), reverse=True
     )
@@ -392,65 +388,8 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         "residual": max(0.0, residual),
         "total_allocated": sum(allocations.values()),
         "branches_served": len(served_ids),
-        "branches_active": len(active_sorted),
+        "branches_active": len(active),
         "warning": warning,
-    }
-
-
-def _run_old_logic(P: float) -> dict:
-    old_remaining: Dict[str, float] = st.session_state["m3_old_remaining"]
-    order: List[str] = st.session_state["m3_old_order"]
-
-    active_count = sum(1 for bid in order if old_remaining.get(bid, 0.0) > EPS)
-
-    remaining_stock = P
-    allocations: Dict[str, float] = {}
-    served_ids: List[str] = []
-
-    for bid in order:
-        if old_remaining.get(bid, 0.0) <= EPS:
-            continue
-        if remaining_stock <= EPS:
-            break
-        alloc = min(remaining_stock, old_remaining[bid])
-        if alloc > EPS:
-            allocations[bid] = alloc
-            served_ids.append(bid)
-            remaining_stock -= alloc
-
-    residual = max(0.0, remaining_stock)
-
-    rows = []
-    for b in st.session_state["m3_branch_data"]:
-        bid = b["id"]
-        if bid not in old_remaining:
-            continue
-        rows.append(_build_row(
-            b,
-            remaining_before=old_remaining[bid],
-            allocated=allocations.get(bid, 0.0),
-        ))
-
-    for bid, alloc in allocations.items():
-        old_remaining[bid] = max(0.0, old_remaining[bid] - alloc)
-    st.session_state["m3_old_remaining"] = old_remaining
-
-    served_set = set(served_ids)
-    unserved_ids = [
-        bid for bid in order
-        if bid not in served_set and old_remaining.get(bid, 0.0) > EPS
-    ]
-
-    return {
-        "rows": rows,
-        "served_ids": served_ids,
-        "unserved_ids": unserved_ids,
-        "served_ids_moved_to_bottom": [],  # old logic never reorders
-        "residual": residual,
-        "total_allocated": sum(allocations.values()),
-        "branches_served": len(served_ids),
-        "branches_active": active_count,
-        "warning": None,
     }
 
 
@@ -460,14 +399,12 @@ def _run_cycle() -> None:
     st.session_state["m3_current_cycle"] += 1
     P = float(st.session_state["m3_mu_stock"])
     threshold = get_effective_threshold()
-    new_result = _run_new_logic(P, threshold)
-    old_result = _run_old_logic(P)
+    result = _run_new_logic(P, threshold)
     st.session_state["m3_cycle_results"].append({
         "cycle": st.session_state["m3_current_cycle"],
         "P": P,
         "threshold": threshold,
-        "new": new_result,
-        "old": old_result,
+        "result": result,
     })
     if st.session_state["m3_current_cycle"] >= MAX_CYCLES:
         st.session_state["m3_sim_complete"] = True
@@ -507,8 +444,7 @@ def _render_controls() -> None:
         ):
             for k in (
                 "m3_cycle_results", "m3_current_cycle",
-                "m3_new_queue", "m3_old_order",
-                "m3_new_remaining", "m3_old_remaining",
+                "m3_new_queue", "m3_new_remaining",
                 "m3_sim_complete",
             ):
                 st.session_state.pop(k, None)
@@ -574,69 +510,44 @@ def _render_cycle_results() -> None:
             f"\U0001F4E6 Cycle {entry['cycle']} Results",
             expanded=(entry["cycle"] == current_cycle),
         ):
+            result = entry["result"]
             st.caption(
                 f"MU Stock Used: {entry['P']:.2f} MT | "
                 f"Threshold: {entry['threshold']:.2f} MT"
             )
-            new = entry["new"]
-            old = entry["old"]
+            if result.get("warning"):
+                st.warning(result["warning"])
 
-            if new.get("warning"):
-                st.warning(new["warning"])
+            _render_result_table(result)
 
-            col_l, col_r = st.columns(2)
-            with col_l:
-                st.markdown("**\U0001F7E2 New Logic — Eligible Set Expansion**")
-                _render_result_table(new)
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Total Allocated", f"{new['total_allocated']:.2f} MT")
-                m2.metric("Residual Stock", f"{new['residual']:.2f} MT")
-                m3.metric(
-                    "Branches Served",
-                    f"{new['branches_served']} of {new['branches_active']} active",
-                )
-            with col_r:
-                st.markdown("**\U0001F534 Old Logic — First-Come-First-Served**")
-                _render_result_table(old)
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Total Allocated", f"{old['total_allocated']:.2f} MT")
-                m2.metric("Residual Stock", f"{old['residual']:.2f} MT")
-                m3.metric(
-                    "Branches Served",
-                    f"{old['branches_served']} of {old['branches_active']} active",
-                )
-
-            st.info(
-                f"New Logic served {new['branches_served']} branches · "
-                f"Old Logic served {old['branches_served']} branches · "
-                f"P = {entry['P']:.2f} MT each"
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Allocated", f"{result['total_allocated']:.2f} MT")
+            m2.metric("Residual Stock", f"{result['residual']:.2f} MT")
+            m3.metric(
+                "Branches Served",
+                f"{result['branches_served']} of {result['branches_active']} active",
             )
 
 
 def _render_cumulative() -> None:
     new_rem = st.session_state["m3_new_remaining"]
-    old_rem = st.session_state["m3_old_remaining"]
-    if not new_rem and not old_rem:
+    if not new_rem:
         return
     st.subheader("\U0001F4CA Cumulative Allocation Progress")
 
     rows = []
     for b in st.session_state["m3_branch_data"]:
         bid = b["id"]
-        if bid not in new_rem and bid not in old_rem:
+        if bid not in new_rem:
             continue
         original = float(b["qk"])
-        new_left = float(new_rem.get(bid, 0.0))
-        old_left = float(old_rem.get(bid, 0.0))
+        remaining = float(new_rem[bid])
         rows.append({
             "Branch": f"{bid} — {b['name']}",
             "Original Qk (MT)": original,
-            "Received — New (MT)": max(0.0, original - new_left),
-            "Received — Old (MT)": max(0.0, original - old_left),
-            "Remaining — New (MT)": new_left,
-            "Remaining — Old (MT)": old_left,
-            "Fulfilled — New": "✅" if new_left <= EPS else "⏳",
-            "Fulfilled — Old": "✅" if old_left <= EPS else "⏳",
+            "Received (MT)": max(0.0, original - remaining),
+            "Remaining (MT)": remaining,
+            "Fulfilled": "✅" if remaining <= EPS else "⏳",
         })
     if not rows:
         st.caption("Run a cycle to populate cumulative progress.")
@@ -644,20 +555,18 @@ def _render_cumulative() -> None:
 
     df = pd.DataFrame(rows)
 
-    def highlight_new_fulfilled(col: pd.Series) -> List[str]:
-        if col.name != "Fulfilled — New":
+    def highlight_fulfilled(col: pd.Series) -> List[str]:
+        if col.name != "Fulfilled":
             return ["" for _ in col]
         return [
             "background-color: #e8f5e9" if v == "✅" else ""
             for v in col
         ]
 
-    styled = df.style.apply(highlight_new_fulfilled, axis=0).format({
+    styled = df.style.apply(highlight_fulfilled, axis=0).format({
         "Original Qk (MT)": "{:.2f}",
-        "Received — New (MT)": "{:.2f}",
-        "Received — Old (MT)": "{:.2f}",
-        "Remaining — New (MT)": "{:.2f}",
-        "Remaining — Old (MT)": "{:.2f}",
+        "Received (MT)": "{:.2f}",
+        "Remaining (MT)": "{:.2f}",
     })
     st.dataframe(styled, hide_index=True, use_container_width=True)
 
@@ -674,11 +583,11 @@ def _render_queue_panel() -> None:
         return
 
     new_rem = st.session_state["m3_new_remaining"]
-    last_new = results[-1]["new"]
+    last_result = results[-1]["result"]
     name_by_id = {b["id"]: b["name"] for b in st.session_state["m3_branch_data"]}
 
-    unserved = last_new["unserved_ids"]
-    served = last_new["served_ids_moved_to_bottom"]
+    unserved = last_result["unserved_ids"]
+    served = last_result["served_ids_moved_to_bottom"]
 
     col_l, col_r = st.columns(2)
     with col_l:
