@@ -488,7 +488,6 @@ def _render_controls() -> None:
     with c1:
         if st.button(
             "▶ Start / Run Cycle 1",
-            key="m3_btn_start",
             type="primary",
             disabled=cycle > 0,
             use_container_width=True,
@@ -497,7 +496,6 @@ def _render_controls() -> None:
     with c2:
         if st.button(
             "⏭ Next Cycle",
-            key="m3_btn_next",
             disabled=(cycle == 0) or complete,
             use_container_width=True,
         ):
@@ -505,7 +503,6 @@ def _render_controls() -> None:
     with c3:
         if st.button(
             "↺ Reset Simulation",
-            key="m3_btn_reset",
             use_container_width=True,
         ):
             for k in (
