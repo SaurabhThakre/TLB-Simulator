@@ -237,6 +237,13 @@ def _render_branch_table() -> None:
         st.session_state["m3_branch_data"] = new_data
         save_state()
 
+    total_qk = sum(float(b["qk"]) for b in st.session_state["m3_branch_data"])
+    n_branches = len(st.session_state["m3_branch_data"])
+    st.markdown(
+        f"**Total Dispatch Quantity:** {total_qk:.2f} MT "
+        f"across {n_branches} branches"
+    )
+
     c1, c2, _ = st.columns([1, 1, 4])
     with c1:
         if st.button("+ Add Branch", use_container_width=True):
@@ -305,56 +312,70 @@ def _run_new_logic(P: float, threshold: float) -> dict:
     new_remaining: Dict[str, float] = st.session_state["m3_new_remaining"]
     queue: List[str] = st.session_state["m3_new_queue"]
 
-    # Preserve queue order: unserved branches are at the top (from previous
-    # cycle's rotation), served branches are at the bottom.  Do NOT re-sort by
-    # remaining here — that would undo the rotation and let previously-served
-    # high-remaining branches jump back to the front.
-    active = [bid for bid in queue if new_remaining.get(bid, 0.0) > EPS]
+    # Active at start of cycle: in-queue branches with remaining > EPS.
+    # Preserve queue order — unserved at top (from previous rotation), served
+    # branches at bottom.  Do NOT re-sort by remaining; that would undo the
+    # rotation and let previously-served high-remaining branches jump back.
+    active_start = [bid for bid in queue if new_remaining.get(bid, 0.0) > EPS]
 
-    k_star = 0
-    no_branch_can_be_served = False
+    remaining_P = float(P)
+    allocations: Dict[str, float] = {}
+    all_served: List[str] = []
 
-    for k in range(1, len(active) + 1):
-        top_k = active[:k]
-        total_q = sum(new_remaining[b] for b in top_k)
-        if total_q <= EPS:
+    # Cascade: keep running eligible-set expansion on the still-unserved-this-cycle
+    # branches with whatever stock is left, until P is exhausted or no branch
+    # can meet the minimum threshold in any remaining pass.
+    while True:
+        if remaining_P <= EPS:
             break
-        trial = {b: new_remaining[b] * P / total_q for b in top_k}
-        min_alloc = min(trial.values())
-        if min_alloc < threshold:
-            k_star = k - 1
-            if k_star == 0:
-                no_branch_can_be_served = True
+        served_set = set(all_served)
+        active = [bid for bid in active_start if bid not in served_set]
+        if not active:
             break
-        if k == len(active):
-            k_star = k
+
+        k_star = 0
+        for k in range(1, len(active) + 1):
+            top_k = active[:k]
+            total_q = sum(new_remaining[b] for b in top_k)
+            if total_q <= EPS:
+                break
+            trial = {b: new_remaining[b] * remaining_P / total_q for b in top_k}
+            min_alloc = min(trial.values())
+            if min_alloc < threshold:
+                k_star = k - 1
+                break
+            if k == len(active):
+                k_star = k
+
+        if k_star == 0:
+            break
+
+        pass_served = list(active[:k_star])
+        total_q_star = sum(new_remaining[b] for b in pass_served)
+        if total_q_star <= EPS:
+            break
+        pass_alloc_sum = 0.0
+        for bid in pass_served:
+            raw = new_remaining[bid] * remaining_P / total_q_star
+            alloc = min(raw, new_remaining[bid])
+            allocations[bid] = alloc
+            pass_alloc_sum += alloc
+
+        all_served.extend(pass_served)
+        remaining_P -= pass_alloc_sum
+
+    residual = max(0.0, remaining_P)
 
     warning = None
-    allocations: Dict[str, float] = {}
-    served_ids: List[str] = []
-
-    if not active:
+    if not active_start:
         warning = "All branches already fulfilled. No allocation needed this cycle."
-        residual = P
-    elif no_branch_can_be_served:
+    elif not all_served:
         warning = (
             "Available stock too low to meet minimum threshold for any branch."
         )
-        residual = P
-    else:
-        served_ids = list(active[:k_star])
-        total_q_star = sum(new_remaining[b] for b in served_ids)
-        if total_q_star <= EPS:
-            allocations = {}
-            residual = P
-        else:
-            for bid in served_ids:
-                raw = new_remaining[bid] * P / total_q_star
-                allocations[bid] = min(raw, new_remaining[bid])
-            residual = P - sum(allocations.values())
 
-    served_set = set(served_ids)
-    unserved_ids = [bid for bid in active if bid not in served_set]
+    served_set = set(all_served)
+    unserved_ids = [bid for bid in active_start if bid not in served_set]
 
     # Per-branch rows for display, in canonical branch_data order.
     rows = []
@@ -373,21 +394,19 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         new_remaining[bid] = max(0.0, new_remaining[bid] - alloc)
     st.session_state["m3_new_remaining"] = new_remaining
 
-    # New queue: unserved (in their existing queue order) at top, served at
-    # bottom.  Do NOT re-sort unserved by remaining — that would let
-    # previously-served high-remaining branches jump back to the top and
-    # break the rotation across cycles.
-    st.session_state["m3_new_queue"] = list(unserved_ids) + served_ids
+    # New queue: unserved (in their existing queue order) at top, all served
+    # this cycle (across cascades, in served order) at bottom.
+    st.session_state["m3_new_queue"] = list(unserved_ids) + list(all_served)
 
     return {
         "rows": rows,
-        "served_ids": served_ids,
+        "served_ids": list(all_served),
         "unserved_ids": list(unserved_ids),
-        "served_ids_moved_to_bottom": served_ids,
-        "residual": max(0.0, residual),
+        "served_ids_moved_to_bottom": list(all_served),
+        "residual": residual,
         "total_allocated": sum(allocations.values()),
-        "branches_served": len(served_ids),
-        "branches_active": len(active),
+        "branches_served": len(all_served),
+        "branches_active": len(active_start),
         "warning": warning,
     }
 
