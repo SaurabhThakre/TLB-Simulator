@@ -1,6 +1,6 @@
 """TLB Inventory Dispatch Simulation engine - forward-simulation algorithm.
 
-20-day inventory cycle with a configurable trigger threshold and a
+100-day inventory cycle with a configurable trigger threshold and a
 forward-simulation projection of on-hand inventory.
 
   Threshold (default 75% of TC) replaces the legacy ROP.
@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-TOTAL_DAYS = 20
+TOTAL_DAYS = 100
 
 
 @dataclass

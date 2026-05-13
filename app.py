@@ -183,6 +183,16 @@ def status_badge(color: str, label: str) -> str:
     )
 
 
+CHART_WINDOW = 20
+
+
+def get_chart_window(current_day: int) -> tuple[int, int]:
+    """Return (x_start, x_end) for the fixed CHART_WINDOW-step sliding window."""
+    x_end = max(CHART_WINDOW, current_day)
+    x_start = x_end - (CHART_WINDOW - 1)
+    return x_start, x_end
+
+
 def _fmt(value: float) -> str:
     return f"{value:.4f}"
 
@@ -357,8 +367,9 @@ def render_chart(sim: Simulation) -> None:
                         line=dict(color="white", width=2)),
         ))
 
+    x_start, x_end = get_chart_window(sim.current_day)
     fig.update_layout(
-        xaxis=dict(title="Day", range=[-0.5, TOTAL_DAYS + 0.5], dtick=1),
+        xaxis=dict(title="Day", range=[x_start - 0.5, x_end + 0.5], dtick=1),
         yaxis=dict(title="Inventory Level (days)", range=[0, chart_top]),
         height=460,
         margin=dict(l=40, r=40, t=30, b=40),
@@ -371,7 +382,7 @@ def render_chart(sim: Simulation) -> None:
 
 def render_summary_table(sim: Simulation) -> None:
     pct = int(round(sim.threshold_pct * 100))
-    st.markdown("#### 20-Day Summary")
+    st.markdown(f"#### {TOTAL_DAYS}-Day Summary")
     rows = []
     for s in sim.history:
         if s.day == 0:
@@ -406,14 +417,20 @@ def render_summary_table(sim: Simulation) -> None:
         return f"background-color: {COLOR_HEX['GREEN']}; color: white;"
 
     styled = df.style.map(color_status, subset=["Status"])
-    st.dataframe(styled, hide_index=True, use_container_width=True)
+    st.dataframe(
+        styled,
+        height=400,
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def render_main() -> None:
     st.title("📦 TLB Inventory Dispatch Simulator")
     st.caption(
-        "Interactive 20-day simulation. Configure parameters in the sidebar, "
-        "click **Start Simulation**, then step through with **Next Day**."
+        f"Interactive {TOTAL_DAYS}-day simulation. Configure parameters in the sidebar, "
+        "click **Start Simulation**, then step through with **Next Day**. "
+        f"The chart slides forward in a {CHART_WINDOW}-day window as you advance."
     )
 
     sim: Simulation | None = st.session_state.sim
