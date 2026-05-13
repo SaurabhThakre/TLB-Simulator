@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -11,6 +13,10 @@ EPS = 1e-9
 FILL_THRESHOLD = 0.90
 
 TRUCK_POOL_DEFAULTS = [9, 13, 18, 25, 30]
+
+STATE_FILE = "m2_state.json"
+PERSIST_PREFIX = "m2_"
+PERSIST_SKIP = {"m2_results", "m2_defaults_applied"}
 
 REQUIRED_COLS = [
     "Material Code",
@@ -34,21 +40,49 @@ INT_FIELDS = ["LT", "LW"]                               # int, step 1
 # State
 # --------------------------------------------------------------------------
 
+def save_state() -> None:
+    data = {}
+    for k, v in st.session_state.items():
+        if not isinstance(k, str) or not k.startswith(PERSIST_PREFIX):
+            continue
+        if k in PERSIST_SKIP:
+            continue
+        try:
+            json.dumps(v)
+        except (TypeError, ValueError):
+            continue
+        data[k] = v
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+
+
+def load_state() -> None:
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    for k, v in data.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
 def _init_state() -> None:
-    # Initialize primary inputs (only if not already set)
+    load_state()
+
     st.session_state.setdefault("m2_primary_q", 0.0)
     st.session_state.setdefault("m2_truck_pool", list(TRUCK_POOL_DEFAULTS))
 
-    # One-time migration: force-apply the top-up defaults once. Existing
-    # sessions may already hold these keys stuck at 0 (created by an earlier
-    # build's number_input widgets before defaults were wired in), which a
-    # plain setdefault would never overwrite. After this runs once, user edits
-    # are preserved across reruns and tab switches.
-    if not st.session_state.get("m2_defaults_applied"):
-        st.session_state["m2_defaults_applied"] = True
-        for idx, row in enumerate(TOPUP_DEFAULTS):
-            for field, val in row.items():
-                st.session_state[f"m2_topup_{idx}_{field}"] = val
+    for idx, row in enumerate(TOPUP_DEFAULTS):
+        for field, val in row.items():
+            st.session_state.setdefault(f"m2_topup_{idx}_{field}", val)
 
 
 # --------------------------------------------------------------------------
@@ -89,7 +123,13 @@ def _render_sku_master() -> Optional[pd.DataFrame]:
         df = st.session_state["sku_master"]
         st.success(f"SKU Master loaded — {len(df)} SKUs available")
         if st.button("Clear SKU Master"):
-            del st.session_state["sku_master"]
+            try:
+                os.remove(STATE_FILE)
+            except FileNotFoundError:
+                pass
+            for k in list(st.session_state.keys()):
+                if isinstance(k, str) and (k == "sku_master" or k.startswith("m2_")):
+                    del st.session_state[k]
             st.rerun()
         return df
 
@@ -107,6 +147,7 @@ def _render_sku_master() -> Optional[pd.DataFrame]:
             st.error(f"SKU Master is missing required columns: {', '.join(missing)}")
             return None
         st.session_state["sku_master"] = df
+        save_state()
         st.rerun()
 
     st.info("Upload a SKU Master `.xlsx` file to begin Module 2.")
@@ -128,7 +169,7 @@ def _render_primary_inputs(lookup: Dict[str, dict]) -> None:
 
     c1, c2 = st.columns([3, 1])
     with c1:
-        st.selectbox("Primary SKU", options=labels, key=key)
+        st.selectbox("Primary SKU", options=labels, key=key, on_change=save_state)
         primary_type = lookup[st.session_state[key]]["type"]
         st.session_state["m2_primary_type"] = primary_type
         if primary_type.lower() == "dry":
@@ -142,14 +183,15 @@ def _render_primary_inputs(lookup: Dict[str, dict]) -> None:
             "Primary Q (Pallets)",
             min_value=0.0, step=0.5, format="%.1f",
             key="m2_primary_q",
+            on_change=save_state,
             help="Quantity to dispatch, in Pallets (1 Pallet = 1 MT).",
         )
 
     st.multiselect(
         "Available Truck Sizes (MT)",
         options=TRUCK_POOL_DEFAULTS,
-        default=st.session_state.get("m2_truck_pool", list(TRUCK_POOL_DEFAULTS)),
         key="m2_truck_pool",
+        on_change=save_state,
     )
 
 
@@ -173,6 +215,7 @@ def _render_topup_table(lookup: Dict[str, dict]) -> None:
             st.selectbox(
                 f"SKU (Row {idx + 1})", options=filtered, key=sku_key,
                 label_visibility="collapsed",
+                on_change=save_state,
             )
         else:
             st.session_state[sku_key] = None
@@ -195,11 +238,13 @@ def _render_topup_table(lookup: Dict[str, dict]) -> None:
                     st.number_input(
                         lbl, min_value=0, step=1,
                         key=f"m2_topup_{idx}_{field}",
+                        on_change=save_state,
                     )
                 else:
                     st.number_input(
                         lbl, min_value=0.0, step=0.5, format="%.1f",
                         key=f"m2_topup_{idx}_{field}",
+                        on_change=save_state,
                     )
         st.divider()
 
@@ -497,6 +542,7 @@ def render() -> None:
     run = b1.button("Optimize Trucks", type="primary", use_container_width=True)
     if b2.button("Clear Results", use_container_width=True):
         st.session_state.pop("m2_results", None)
+        save_state()
         st.rerun()
 
     if run:
@@ -505,7 +551,10 @@ def render() -> None:
         else:
             with st.spinner("Optimizing trucks..."):
                 st.session_state["m2_results"] = _optimize(lookup)
+            save_state()
 
     if "m2_results" in st.session_state:
         st.divider()
         _render_results(st.session_state["m2_results"], lookup)
+
+    save_state()
