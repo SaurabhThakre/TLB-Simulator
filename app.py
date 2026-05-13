@@ -397,11 +397,14 @@ def render_chart(sim: Simulation) -> None:
         max_window_start = max(1, sim.current_day - CHART_WINDOW + 1)
         col1, col2 = st.columns([5, 1])
         with col1:
+            slider_value = st.session_state.chart_window_start
+            if slider_value is None:
+                slider_value = max_window_start
             st.slider(
                 "🔍 Navigate history (window start day):",
                 min_value=1,
                 max_value=max_window_start,
-                value=st.session_state.chart_window_start or max_window_start,
+                value=slider_value,
                 step=1,
                 key="chart_window_start",
                 label_visibility="collapsed",
