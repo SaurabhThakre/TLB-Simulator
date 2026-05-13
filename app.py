@@ -65,7 +65,9 @@ def advance_day() -> None:
     sim: Simulation = st.session_state.sim
     if sim is not None and sim.can_advance():
         sim.advance_day()
-        st.session_state.chart_window_start = None  # Reset chart to latest window
+        # Re-center chart to the latest window after each step.
+        new_max = max(1, sim.current_day - CHART_WINDOW + 1)
+        st.session_state["chart_window_start"] = new_max
 
 
 def render_sidebar() -> None:
@@ -368,17 +370,18 @@ def render_chart(sim: Simulation) -> None:
                         line=dict(color="white", width=2)),
         ))
 
-    # Initialize manual window position state
-    if "chart_window_start" not in st.session_state:
-        st.session_state.chart_window_start = None
+    # Determine x-axis range: manual position (if set & valid) or auto-scroll
+    max_window_start = max(1, sim.current_day - CHART_WINDOW + 1)
+    manual_start = st.session_state.get("chart_window_start")
 
-    # Determine x-axis range: auto-scroll to latest or show manual position
-    if sim.current_day > 0 and st.session_state.chart_window_start is not None:
-        # User has manually scrolled — show that window
-        x_start = st.session_state.chart_window_start
+    if (
+        sim.current_day > 0
+        and isinstance(manual_start, int)
+        and 1 <= manual_start <= max_window_start
+    ):
+        x_start = manual_start
         x_end = min(x_start + CHART_WINDOW - 1, sim.current_day)
     else:
-        # Auto-scroll to latest window
         x_start, x_end = get_chart_window(sim.current_day)
 
     fig.update_layout(
@@ -392,26 +395,27 @@ def render_chart(sim: Simulation) -> None:
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Scrollbar for manual window navigation (below chart)
-    if sim.current_day > 0:
-        max_window_start = max(1, sim.current_day - CHART_WINDOW + 1)
+    # Scrollbar only when there's room to scroll (after day 20)
+    if max_window_start > 1:
+        # Seed / clamp slider state BEFORE the widget renders.
+        # Session state is the single source of truth — no `value=` on the slider.
+        cur = st.session_state.get("chart_window_start")
+        if not isinstance(cur, int) or cur < 1 or cur > max_window_start:
+            st.session_state["chart_window_start"] = max_window_start
+
         col1, col2 = st.columns([5, 1])
         with col1:
-            slider_value = st.session_state.chart_window_start
-            if slider_value is None:
-                slider_value = max_window_start
             st.slider(
                 "🔍 Navigate history (window start day):",
                 min_value=1,
                 max_value=max_window_start,
-                value=slider_value,
                 step=1,
                 key="chart_window_start",
                 label_visibility="collapsed",
             )
         with col2:
             if st.button("⏭ Latest", use_container_width=True, key="reset_chart_window"):
-                st.session_state.chart_window_start = None
+                st.session_state["chart_window_start"] = max_window_start
                 st.rerun()
 
 
