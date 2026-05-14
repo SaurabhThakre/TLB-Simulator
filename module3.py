@@ -241,10 +241,13 @@ def _render_branch_table() -> None:
         },
     )
 
-    # Sync the edited frame back into the canonical list-of-dicts state.
-    # No live sort — the user clicks "Sort by UI" below to re-order.
-    new_data: List[dict] = []
+    # Build a lookup of edited values keyed by Branch ID.
+    # We apply changes back to `branches` IN CANONICAL ORDER so that any
+    # client-side column sort inside the data_editor never alters the stored
+    # row order — only the explicit "Sort by UI" button may do that.
+    edited_by_id: dict = {}
     for _, row in edited.iterrows():
+        bid = str(row["Branch ID"])
         try:
             qk = float(row["Dispatch Qty Qk (MT)"])
         except (TypeError, ValueError):
@@ -253,12 +256,17 @@ def _render_branch_table() -> None:
             ui = float(row["UI Score"])
         except (TypeError, ValueError):
             ui = 0.0
-        new_data.append({
-            "id": str(row["Branch ID"]),
-            "name": str(row["Branch Name"]),
-            "qk": qk,
-            "ui": ui,
-        })
+        edited_by_id[bid] = {"name": str(row["Branch Name"]), "qk": qk, "ui": ui}
+
+    new_data: List[dict] = []
+    for b in branches:
+        bid = b["id"]
+        if bid in edited_by_id:
+            e = edited_by_id[bid]
+            new_data.append({"id": bid, "name": e["name"], "qk": e["qk"], "ui": e["ui"]})
+        else:
+            new_data.append(dict(b))
+
     if new_data != branches:
         st.session_state["m3_branch_data"] = new_data
         save_state()
