@@ -242,6 +242,7 @@ def _render_branch_table() -> None:
     )
 
     # Sync the edited frame back into the canonical list-of-dicts state.
+    # No live sort — the user clicks "Sort by UI" below to re-order.
     new_data: List[dict] = []
     for _, row in edited.iterrows():
         try:
@@ -258,10 +259,8 @@ def _render_branch_table() -> None:
             "qk": qk,
             "ui": ui,
         })
-    # Live sort by UI ascending on every edit; persist the reordered table.
-    new_data_sorted = sorted(new_data, key=lambda b: b["ui"])
-    if new_data_sorted != branches:
-        st.session_state["m3_branch_data"] = new_data_sorted
+    if new_data != branches:
+        st.session_state["m3_branch_data"] = new_data
         save_state()
 
     total_qk = sum(float(b["qk"]) for b in st.session_state["m3_branch_data"])
@@ -271,7 +270,7 @@ def _render_branch_table() -> None:
         f"across {n_branches} branches"
     )
 
-    c1, c2, _ = st.columns([1, 1, 4])
+    c1, c2, c3, _ = st.columns([1, 1, 1, 3])
     with c1:
         if st.button("+ Add Branch", use_container_width=True):
             n = len(st.session_state["m3_branch_data"]) + 1
@@ -291,6 +290,21 @@ def _render_branch_table() -> None:
             use_container_width=True,
         ):
             st.session_state["m3_branch_data"].pop()
+            save_state()
+            st.rerun()
+    with c3:
+        if st.button(
+            "🔄 Sort by UI",
+            use_container_width=True,
+            help="Re-order the table by Urgency Index (ascending — most urgent first).",
+        ):
+            st.session_state["m3_branch_data"] = sorted(
+                st.session_state["m3_branch_data"],
+                key=lambda b: float(b.get("ui", 0.0)),
+            )
+            # Drop the data_editor's internal diff state so the editor
+            # picks up the freshly sorted rows on the next render.
+            st.session_state.pop("m3_branch_editor", None)
             save_state()
             st.rerun()
 
