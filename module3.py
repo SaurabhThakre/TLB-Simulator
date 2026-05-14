@@ -30,6 +30,8 @@ PERSIST_SKIP = {
     "m3_sim_complete",
     # Internal Streamlit data_editor diff-state; persisting it double-applies edits.
     "m3_branch_editor",
+    # Session-only init flag — must never be written to disk.
+    "m3_initialized",
 }
 
 DEFAULT_BRANCHES = [
@@ -105,7 +107,17 @@ def load_state() -> None:
 
 
 def _init_state() -> None:
-    # 1. Persistent inputs — hardcoded defaults via setdefault.
+    # Only run once per browser session. Subsequent reruns use session state
+    # directly — re-reading from disk on every rerun would overwrite in-flight
+    # edits with stale persisted values (the alternating-edit-lost bug).
+    if st.session_state.get("m3_initialized"):
+        return
+
+    # 1. Load persisted values from disk first so they win over hard-coded
+    #    defaults for any key that was previously saved.
+    load_state()
+
+    # 2. Apply hard-coded defaults for any key not present on disk.
     st.session_state.setdefault("m3_mu_stock", MU_STOCK_DEFAULT)
     st.session_state.setdefault("m3_threshold_mode", "Fixed MT")
     st.session_state.setdefault("m3_threshold_value", MIN_THRESHOLD_DEFAULT)
@@ -113,15 +125,14 @@ def _init_state() -> None:
     st.session_state.setdefault("m3_dynamic_days", DYNAMIC_DAYS_DEFAULT)
     st.session_state.setdefault("m3_branch_data", copy.deepcopy(DEFAULT_BRANCHES))
 
-    # 2. Simulation runtime — never persisted.
+    # 3. Simulation runtime — never persisted.
     st.session_state.setdefault("m3_current_cycle", 0)
     st.session_state.setdefault("m3_cycle_results", [])
     st.session_state.setdefault("m3_new_queue", [])
     st.session_state.setdefault("m3_new_remaining", {})
     st.session_state.setdefault("m3_sim_complete", False)
 
-    # 3. Override persistent inputs with saved values.
-    load_state()
+    st.session_state["m3_initialized"] = True
 
 
 def get_effective_threshold() -> float:
