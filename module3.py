@@ -211,6 +211,42 @@ def _render_global_inputs() -> None:
 
 
 # --------------------------------------------------------------------------
+# Branch table helpers
+# --------------------------------------------------------------------------
+
+def _commit_from_editor(edited: "pd.DataFrame") -> None:
+    """Apply all pending data_editor edits to m3_branch_data by Branch ID match.
+
+    Called before any action that mutates m3_branch_data (sort, add, remove).
+    Uses ID-keyed lookup so row order is always taken from the canonical
+    m3_branch_data list, never from the editor's current display order.
+    """
+    branches = st.session_state["m3_branch_data"]
+    edited_by_id: dict = {}
+    for _, row in edited.iterrows():
+        bid = str(row["Branch ID"])
+        try:
+            qk = float(row["Dispatch Qty Qk (MT)"])
+        except (TypeError, ValueError):
+            qk = 0.0
+        try:
+            ui = float(row["UI Score"])
+        except (TypeError, ValueError):
+            ui = 0.0
+        edited_by_id[bid] = {"name": str(row["Branch Name"]), "qk": qk, "ui": ui}
+
+    new_data: List[dict] = []
+    for b in branches:
+        bid = b["id"]
+        if bid in edited_by_id:
+            e = edited_by_id[bid]
+            new_data.append({"id": bid, "name": e["name"], "qk": e["qk"], "ui": e["ui"]})
+        else:
+            new_data.append(dict(b))
+    st.session_state["m3_branch_data"] = new_data
+
+
+# --------------------------------------------------------------------------
 # Branch table
 # --------------------------------------------------------------------------
 
@@ -252,46 +288,30 @@ def _render_branch_table() -> None:
         },
     )
 
-    # Build a lookup of edited values keyed by Branch ID.
-    # We apply changes back to `branches` IN CANONICAL ORDER so that any
-    # client-side column sort inside the data_editor never alters the stored
-    # row order — only the explicit "Sort by UI" button may do that.
-    edited_by_id: dict = {}
-    for _, row in edited.iterrows():
-        bid = str(row["Branch ID"])
-        try:
-            qk = float(row["Dispatch Qty Qk (MT)"])
-        except (TypeError, ValueError):
-            qk = 0.0
-        try:
-            ui = float(row["UI Score"])
-        except (TypeError, ValueError):
-            ui = 0.0
-        edited_by_id[bid] = {"name": str(row["Branch Name"]), "qk": qk, "ui": ui}
+    # No auto-sync back to m3_branch_data here.
+    # Streamlit's data_editor resets its entire diff state whenever the input
+    # df changes between renders. Auto-syncing would update m3_branch_data →
+    # rebuild df → trigger a diff reset → drop the very next edit (alternating
+    # edit-lost bug). Instead, df stays stable across all user edits and edits
+    # are committed to m3_branch_data only on explicit button clicks below.
 
-    new_data: List[dict] = []
-    for b in branches:
-        bid = b["id"]
-        if bid in edited_by_id:
-            e = edited_by_id[bid]
-            new_data.append({"id": bid, "name": e["name"], "qk": e["qk"], "ui": e["ui"]})
-        else:
-            new_data.append(dict(b))
-
-    if new_data != branches:
-        st.session_state["m3_branch_data"] = new_data
-        save_state()
-
-    total_qk = sum(float(b["qk"]) for b in st.session_state["m3_branch_data"])
-    n_branches = len(st.session_state["m3_branch_data"])
+    # Show live total from the editor's current output (not yet committed).
+    try:
+        total_qk = sum(
+            float(row["Dispatch Qty Qk (MT)"])
+            for _, row in edited.iterrows()
+        )
+    except (TypeError, ValueError):
+        total_qk = sum(float(b["qk"]) for b in branches)
     st.markdown(
         f"**Total Dispatch Quantity:** {total_qk:.2f} MT "
-        f"across {n_branches} branches"
+        f"across {len(branches)} branches"
     )
 
     c1, c2, c3, _ = st.columns([1, 1, 1, 3])
     with c1:
         if st.button("+ Add Branch", use_container_width=True):
+            _commit_from_editor(edited)
             n = len(st.session_state["m3_branch_data"]) + 1
             st.session_state["m3_branch_data"].append({
                 "id": f"B{n:02d}",
@@ -299,16 +319,19 @@ def _render_branch_table() -> None:
                 "qk": 0.0,
                 "ui": 0.0,
             })
+            st.session_state.pop("m3_branch_editor", None)
             save_state()
             st.rerun()
     with c2:
-        disable_remove = len(st.session_state["m3_branch_data"]) <= 1
+        disable_remove = len(branches) <= 1
         if st.button(
             "× Remove Last Branch",
             disabled=disable_remove,
             use_container_width=True,
         ):
+            _commit_from_editor(edited)
             st.session_state["m3_branch_data"].pop()
+            st.session_state.pop("m3_branch_editor", None)
             save_state()
             st.rerun()
     with c3:
@@ -317,12 +340,11 @@ def _render_branch_table() -> None:
             use_container_width=True,
             help="Re-order the table by Urgency Index (ascending — most urgent first).",
         ):
+            _commit_from_editor(edited)
             st.session_state["m3_branch_data"] = sorted(
                 st.session_state["m3_branch_data"],
                 key=lambda b: float(b.get("ui", 0.0)),
             )
-            # Drop the data_editor's internal diff state so the editor
-            # picks up the freshly sorted rows on the next render.
             st.session_state.pop("m3_branch_editor", None)
             save_state()
             st.rerun()
