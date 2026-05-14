@@ -65,6 +65,26 @@ def urgency_index(I: float, SIT: float, PO: float,
     return (I + SIT + PO) / D - (LT + LW)
 
 
+def sort_branches_by_ui(branches: List[dict]) -> List[dict]:
+    """Two-group sort for the Sort by UI button.
+
+    Group 1 (UI ≤ 0): sorted by Dispatch Qty Qk descending — higher-quantity
+    branches with negative urgency are prioritised first within the group.
+    Group 2 (UI > 0): sorted by UI ascending — least urgent last.
+    Group 1 always precedes Group 2 in the final list.
+    """
+    neg = sorted(
+        [b for b in branches if float(b.get("ui", 0.0)) <= 0],
+        key=lambda b: float(b["qk"]),
+        reverse=True,
+    )
+    pos = sorted(
+        [b for b in branches if float(b.get("ui", 0.0)) > 0],
+        key=lambda b: float(b.get("ui", 0.0)),
+    )
+    return neg + pos
+
+
 # --------------------------------------------------------------------------
 # Persistence
 # --------------------------------------------------------------------------
@@ -257,7 +277,8 @@ def _render_branch_table() -> None:
     st.markdown(
         "**Branch Priority Formula — Urgency Index (UI):**  "
         "`UI = (I + SIT + PO) / D − (LT + LW)`  \n"
-        "Sort: ascending · Lower UI = Higher urgency = Higher priority"
+        "Sort: **UI ≤ 0** → descending Dispatch Qty · "
+        "**UI > 0** → ascending UI Score"
     )
 
     df = pd.DataFrame([
@@ -338,12 +359,14 @@ def _render_branch_table() -> None:
         if st.button(
             "🔄 Sort by UI",
             use_container_width=True,
-            help="Re-order the table by Urgency Index (ascending — most urgent first).",
+            help=(
+                "Sort: UI ≤ 0 → descending Dispatch Qty · "
+                "UI > 0 → ascending UI Score"
+            ),
         ):
             _commit_from_editor(edited)
-            st.session_state["m3_branch_data"] = sorted(
-                st.session_state["m3_branch_data"],
-                key=lambda b: float(b.get("ui", 0.0)),
+            st.session_state["m3_branch_data"] = sort_branches_by_ui(
+                st.session_state["m3_branch_data"]
             )
             st.session_state.pop("m3_branch_editor", None)
             save_state()
