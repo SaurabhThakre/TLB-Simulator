@@ -599,9 +599,9 @@ def _render_bar_chart() -> None:
     st.subheader("📊 Dispatch Requirements — Live View")
 
     branches = st.session_state["m3_branch_data"]
-    new_rem = st.session_state["m3_new_remaining"]
-    results = st.session_state["m3_cycle_results"]
-    cycle = st.session_state["m3_current_cycle"]
+    new_rem = st.session_state.get("m3_new_remaining", {})
+    results = st.session_state.get("m3_cycle_results", [])
+    cycle = st.session_state.get("m3_current_cycle", 0)
 
     last_served: set = set()
     if results:
