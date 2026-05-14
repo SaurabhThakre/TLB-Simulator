@@ -127,14 +127,22 @@ def load_state() -> None:
 
 
 def _init_state() -> None:
-    # Only run once per browser session. Subsequent reruns use session state
-    # directly — re-reading from disk on every rerun would overwrite in-flight
-    # edits with stale persisted values (the alternating-edit-lost bug).
+    # Simulation runtime keys — ALWAYS re-seed these with setdefault so they
+    # exist even after the sidebar Reset button clears them and even when
+    # render_sidebar() runs before render() in the same rerun.
+    st.session_state.setdefault("m3_current_cycle", 0)
+    st.session_state.setdefault("m3_cycle_results", [])
+    st.session_state.setdefault("m3_new_queue", [])
+    st.session_state.setdefault("m3_new_remaining", {})
+    st.session_state.setdefault("m3_sim_complete", False)
+
+    # Persistent inputs — only initialise once per browser session.
+    # Re-reading disk on every rerun would overwrite in-flight edits with
+    # stale persisted values (the alternating-edit-lost bug).
     if st.session_state.get("m3_initialized"):
         return
 
-    # 1. Load persisted values from disk first so they win over hard-coded
-    #    defaults for any key that was previously saved.
+    # 1. Load persisted values from disk first so they win over hard-coded defaults.
     load_state()
 
     # 2. Apply hard-coded defaults for any key not present on disk.
@@ -144,13 +152,6 @@ def _init_state() -> None:
     st.session_state.setdefault("m3_dynamic_demand", DYNAMIC_DEMAND_DEFAULT)
     st.session_state.setdefault("m3_dynamic_days", DYNAMIC_DAYS_DEFAULT)
     st.session_state.setdefault("m3_branch_data", copy.deepcopy(DEFAULT_BRANCHES))
-
-    # 3. Simulation runtime — never persisted.
-    st.session_state.setdefault("m3_current_cycle", 0)
-    st.session_state.setdefault("m3_cycle_results", [])
-    st.session_state.setdefault("m3_new_queue", [])
-    st.session_state.setdefault("m3_new_remaining", {})
-    st.session_state.setdefault("m3_sim_complete", False)
 
     st.session_state["m3_initialized"] = True
 
@@ -547,6 +548,9 @@ def _run_cycle() -> None:
 # --------------------------------------------------------------------------
 
 def render_sidebar() -> None:
+    # Ensure runtime keys exist — this function is called from app.py before
+    # render(), so _init_state() must run here too (it is idempotent).
+    _init_state()
     cycle = st.session_state.get("m3_current_cycle", 0)
     complete = st.session_state.get("m3_sim_complete", False)
 
