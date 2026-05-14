@@ -265,8 +265,11 @@ def _render_topup_table(lookup: Dict[str, dict]) -> None:
 # Algorithm
 # --------------------------------------------------------------------------
 
-def _priority_index(I: float, SIT: float, PO: float, D: float, LT: float, LW: float) -> float:
-    return (I + SIT + PO) / (D * (10 + LT + LW))
+def urgency_index(I: float, SIT: float, PO: float,
+                  D: float, LT: float, LW: float) -> float:
+    if D <= EPS:
+        return float('inf')
+    return (I + SIT + PO) / D - (LT + LW)
 
 
 def _pack_primary(Q: float, pool: List[int]) -> List[dict]:
@@ -336,10 +339,10 @@ def _optimize(lookup: Dict[str, dict]) -> dict:
         topups.append({
             "row": idx, "label": sku_label,
             "I": I, "AC": AC, "D": D, "SIT": SIT, "PO": PO, "LT": LT, "LW": LW, "PC": PC,
-            "i_score": _priority_index(I, SIT, PO, D, LT, LW),
+            "ui_score": urgency_index(I, SIT, PO, D, LT, LW),
             "TC": TC, "sku_cap": sku_cap,
         })
-    topups.sort(key=lambda t: t["i_score"])
+    topups.sort(key=lambda t: t["ui_score"])
 
     loaded_map: Dict[int, float] = {}
     below_threshold = False
@@ -381,7 +384,7 @@ def _optimize(lookup: Dict[str, dict]) -> dict:
         topup_ranking.append({
             "rank": rank,
             "sku": t["label"],
-            "i_score": t["i_score"],
+            "ui_score": t["ui_score"],
             "TC_pallets": t["TC"],
             "TQ_cap_pallets": t["sku_cap"],
             "loaded_pallets": loaded_map.get(t["row"], 0.0),
@@ -455,7 +458,7 @@ def _render_results(results: dict, lookup: Dict[str, dict]) -> None:
             rows.append({
                 "#": r["rank"],
                 "SKU": r["sku"],
-                "i Score": round(r["i_score"], 4),
+                "UI Score": round(r["ui_score"], 4),
                 "TC (MT / cases)": fmt(r["TC_pallets"], cpp),
                 "TQ Cap (MT / cases)": fmt(r["TQ_cap_pallets"], cpp),
                 "Loaded (MT / cases)": fmt(loaded, cpp) if loaded > EPS else "—",

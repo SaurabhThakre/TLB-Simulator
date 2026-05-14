@@ -19,7 +19,7 @@ DYNAMIC_DAYS_DEFAULT = 1
 MU_STOCK_DEFAULT = 50.0
 
 STATE_FILE = "m3_state.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PERSIST_PREFIX = "m3_"
 PERSIST_SKIP = {
     "m3_cycle_results",
@@ -33,27 +33,34 @@ PERSIST_SKIP = {
 }
 
 DEFAULT_BRANCHES = [
-    {"id": "B01", "name": "Branch 01", "qk": 60.0},
-    {"id": "B02", "name": "Branch 02", "qk": 55.0},
-    {"id": "B03", "name": "Branch 03", "qk": 50.0},
-    {"id": "B04", "name": "Branch 04", "qk": 45.0},
-    {"id": "B05", "name": "Branch 05", "qk": 40.0},
-    {"id": "B06", "name": "Branch 06", "qk": 35.0},
-    {"id": "B07", "name": "Branch 07", "qk": 30.0},
-    {"id": "B08", "name": "Branch 08", "qk": 25.0},
-    {"id": "B09", "name": "Branch 09", "qk": 20.0},
-    {"id": "B10", "name": "Branch 10", "qk": 18.0},
-    {"id": "B11", "name": "Branch 11", "qk": 15.0},
-    {"id": "B12", "name": "Branch 12", "qk": 12.0},
-    {"id": "B13", "name": "Branch 13", "qk": 10.0},
-    {"id": "B14", "name": "Branch 14", "qk": 8.0},
-    {"id": "B15", "name": "Branch 15", "qk": 5.0},
-    {"id": "B16", "name": "Branch 16", "qk": 0.8},
-    {"id": "B17", "name": "Branch 17", "qk": 0.6},
-    {"id": "B18", "name": "Branch 18", "qk": 0.4},
-    {"id": "B19", "name": "Branch 19", "qk": 0.2},
-    {"id": "B20", "name": "Branch 20", "qk": 0.0},
+    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": -4.5},
+    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -3.8},
+    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": -3.1},
+    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -2.6},
+    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": -1.9},
+    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": -1.2},
+    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -0.5},
+    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 0.2},
+    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": 0.8},
+    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 1.5},
+    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": 2.1},
+    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 2.8},
+    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 3.4},
+    {"id": "B14", "name": "Branch 14", "qk": 8.0, "ui": 4.0},
+    {"id": "B15", "name": "Branch 15", "qk": 5.0, "ui": 4.7},
+    {"id": "B16", "name": "Branch 16", "qk": 0.8, "ui": 5.3},
+    {"id": "B17", "name": "Branch 17", "qk": 0.6, "ui": 6.0},
+    {"id": "B18", "name": "Branch 18", "qk": 0.4, "ui": 6.8},
+    {"id": "B19", "name": "Branch 19", "qk": 0.2, "ui": 7.5},
+    {"id": "B20", "name": "Branch 20", "qk": 0.0, "ui": 8.2},
 ]
+
+
+def urgency_index(I: float, SIT: float, PO: float,
+                  D: float, LT: float, LW: float) -> float:
+    if D <= EPS:
+        return float('inf')
+    return (I + SIT + PO) / D - (LT + LW)
 
 
 # --------------------------------------------------------------------------
@@ -200,9 +207,16 @@ def _render_branch_table() -> None:
     st.subheader("Branch Configuration")
     branches = st.session_state["m3_branch_data"]
 
+    st.markdown(
+        "**Branch Priority Formula — Urgency Index (UI):**  "
+        "`UI = (I + SIT + PO) / D − (LT + LW)`  \n"
+        "Sort: ascending · Lower UI = Higher urgency = Higher priority"
+    )
+
     df = pd.DataFrame([
         {"Branch ID": b["id"], "Branch Name": b["name"],
-         "Dispatch Qty Qk (MT)": float(b["qk"])}
+         "Dispatch Qty Qk (MT)": float(b["qk"]),
+         "UI Score": float(b.get("ui", 0.0))}
         for b in branches
     ])
 
@@ -219,6 +233,11 @@ def _render_branch_table() -> None:
                 "Dispatch Qty Qk (MT)",
                 min_value=0.0, step=0.5, format="%.1f",
             ),
+            "UI Score": st.column_config.NumberColumn(
+                "UI Score",
+                step=0.1, format="%.2f",
+                help="Urgency Index — lower = higher priority.",
+            ),
         },
     )
 
@@ -229,13 +248,20 @@ def _render_branch_table() -> None:
             qk = float(row["Dispatch Qty Qk (MT)"])
         except (TypeError, ValueError):
             qk = 0.0
+        try:
+            ui = float(row["UI Score"])
+        except (TypeError, ValueError):
+            ui = 0.0
         new_data.append({
             "id": str(row["Branch ID"]),
             "name": str(row["Branch Name"]),
             "qk": qk,
+            "ui": ui,
         })
-    if new_data != branches:
-        st.session_state["m3_branch_data"] = new_data
+    # Live sort by UI ascending on every edit; persist the reordered table.
+    new_data_sorted = sorted(new_data, key=lambda b: b["ui"])
+    if new_data_sorted != branches:
+        st.session_state["m3_branch_data"] = new_data_sorted
         save_state()
 
     total_qk = sum(float(b["qk"]) for b in st.session_state["m3_branch_data"])
@@ -253,6 +279,7 @@ def _render_branch_table() -> None:
                 "id": f"B{n:02d}",
                 "name": f"Branch {n:02d}",
                 "qk": 0.0,
+                "ui": 0.0,
             })
             save_state()
             st.rerun()
@@ -279,7 +306,8 @@ def _initialise_simulation() -> None:
         new_rem[b["id"]] = float(b["qk"])
 
     eligible = [b for b in branches if float(b["qk"]) > EPS]
-    eligible_sorted = sorted(eligible, key=lambda b: float(b["qk"]), reverse=True)
+    # Sort by Urgency Index ascending — lower UI = higher priority.
+    eligible_sorted = sorted(eligible, key=lambda b: float(b.get("ui", 0.0)))
     ordered_ids = [b["id"] for b in eligible_sorted]
 
     st.session_state["m3_new_remaining"] = new_rem
@@ -312,11 +340,15 @@ def _build_row(
 def _run_new_logic(P: float, threshold: float) -> dict:
     new_remaining: Dict[str, float] = st.session_state["m3_new_remaining"]
     queue: List[str] = st.session_state["m3_new_queue"]
+    ui_lookup: Dict[str, float] = {
+        b["id"]: float(b.get("ui", 0.0))
+        for b in st.session_state["m3_branch_data"]
+    }
 
     # Active at start of cycle: in-queue branches with remaining > EPS.
     # Preserve queue order — unserved at top (from previous rotation), served
-    # branches at bottom.  Do NOT re-sort by remaining; that would undo the
-    # rotation and let previously-served high-remaining branches jump back.
+    # branches at bottom. Within a cycle's cascade passes we keep queue order;
+    # only the between-cycle queue rebuild re-sorts unserved by UI ascending.
     active_start = [bid for bid in queue if new_remaining.get(bid, 0.0) > EPS]
 
     remaining_P = float(P)
@@ -395,14 +427,15 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         new_remaining[bid] = max(0.0, new_remaining[bid] - alloc)
     st.session_state["m3_new_remaining"] = new_remaining
 
-    # New queue: unserved (in their existing queue order) at top, all served
+    # New queue: unserved sorted by UI ascending at top, all served
     # this cycle (across cascades, in served order) at bottom.
-    st.session_state["m3_new_queue"] = list(unserved_ids) + list(all_served)
+    unserved_by_ui = sorted(unserved_ids, key=lambda b: ui_lookup.get(b, 0.0))
+    st.session_state["m3_new_queue"] = list(unserved_by_ui) + list(all_served)
 
     return {
         "rows": rows,
         "served_ids": list(all_served),
-        "unserved_ids": list(unserved_ids),
+        "unserved_ids": list(unserved_by_ui),
         "served_ids_moved_to_bottom": list(all_served),
         "residual": residual,
         "total_allocated": sum(allocations.values()),
@@ -574,10 +607,15 @@ def _style_status_row(row: pd.Series) -> List[str]:
 
 
 def _render_result_table(result: dict) -> None:
+    ui_lookup = {
+        b["id"]: float(b.get("ui", 0.0))
+        for b in st.session_state["m3_branch_data"]
+    }
     rows = []
     for r in result["rows"]:
         rows.append({
             "Branch": f"{r['branch_id']} — {r['branch_name']}",
+            "UI Score": ui_lookup.get(r["branch_id"], 0.0),
             "Original Qk (MT)": r["original_qk"],
             "Before (MT)": r["remaining_before"],
             "Allocated (MT)": r["allocated"],
@@ -589,6 +627,7 @@ def _render_result_table(result: dict) -> None:
         return
     df = pd.DataFrame(rows)
     styled = df.style.apply(_style_status_row, axis=1).format({
+        "UI Score": "{:.2f}",
         "Original Qk (MT)": "{:.2f}",
         "Before (MT)": "{:.2f}",
         "Allocated (MT)": "{:.2f}",
@@ -641,6 +680,7 @@ def _render_cumulative() -> None:
         remaining = float(new_rem[bid])
         rows.append({
             "Branch": f"{bid} — {b['name']}",
+            "UI Score": float(b.get("ui", 0.0)),
             "Original Qk (MT)": original,
             "Received (MT)": max(0.0, original - remaining),
             "Remaining (MT)": remaining,
@@ -661,6 +701,7 @@ def _render_cumulative() -> None:
         ]
 
     styled = df.style.apply(highlight_fulfilled, axis=0).format({
+        "UI Score": "{:.2f}",
         "Original Qk (MT)": "{:.2f}",
         "Received (MT)": "{:.2f}",
         "Remaining (MT)": "{:.2f}",
@@ -682,6 +723,10 @@ def _render_queue_panel() -> None:
     new_rem = st.session_state["m3_new_remaining"]
     last_result = results[-1]["result"]
     name_by_id = {b["id"]: b["name"] for b in st.session_state["m3_branch_data"]}
+    ui_by_id = {
+        b["id"]: float(b.get("ui", 0.0))
+        for b in st.session_state["m3_branch_data"]
+    }
 
     unserved = last_result["unserved_ids"]
     served = last_result["served_ids_moved_to_bottom"]
@@ -693,6 +738,7 @@ def _render_queue_panel() -> None:
             {
                 "Branch ID": bid,
                 "Branch Name": name_by_id.get(bid, ""),
+                "UI Score": round(ui_by_id.get(bid, 0.0), 2),
                 "Remaining Qk (MT)": round(new_rem.get(bid, 0.0), 2),
             }
             for bid in unserved
@@ -707,6 +753,7 @@ def _render_queue_panel() -> None:
             {
                 "Branch ID": bid,
                 "Branch Name": name_by_id.get(bid, ""),
+                "UI Score": round(ui_by_id.get(bid, 0.0), 2),
                 "Remaining Qk (MT)": round(new_rem.get(bid, 0.0), 2),
             }
             for bid in served
