@@ -38,27 +38,31 @@ PERSIST_SKIP = {
 # lc = Lower Cap (minimum dispatch load, MT) — LC = D × (0.5 × TC − I).
 # uc = Upper Cap (fixed per SKU-branch production quota, MT) — set by management.
 # Both are seeded with dummy values here and are editable in the UI.
+# LC and UC dummy values: most branches use LC ≈ 80% and UC ≈ 120% of their Qk.
+# Two deliberate edge cases:
+#   B05 — UC = 80% of Qk  → allocation gets clamped, freeing ΔP for redistribution.
+#   B15 — LC = 120% of Qk → Qk < LC, branch excluded from the queue.
 DEFAULT_BRANCHES = [
-    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": -4.5, "lc": 24.0, "uc": 48.0},
-    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -3.8, "lc": 22.0, "uc": 44.0},
-    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": -3.1, "lc": 20.0, "uc": 40.0},
-    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -2.6, "lc": 18.0, "uc": 36.0},
-    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": -1.9, "lc": 16.0, "uc": 32.0},
-    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": -1.2, "lc": 14.0, "uc": 28.0},
-    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -0.5, "lc": 12.0, "uc": 24.0},
-    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 0.2, "lc": 10.0, "uc": 20.0},
-    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": 0.8, "lc": 8.0,  "uc": 16.0},
-    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 1.5, "lc": 7.0,  "uc": 14.0},
-    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": 2.1, "lc": 6.0,  "uc": 12.0},
-    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 2.8, "lc": 5.0,  "uc": 9.5},
-    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 3.4, "lc": 4.0,  "uc": 8.0},
-    {"id": "B14", "name": "Branch 14", "qk": 8.0,  "ui": 4.0, "lc": 3.0,  "uc": 6.5},
-    {"id": "B15", "name": "Branch 15", "qk": 5.0,  "ui": 4.7, "lc": 2.0,  "uc": 4.0},
-    {"id": "B16", "name": "Branch 16", "qk": 0.8,  "ui": 5.3, "lc": 0.5,  "uc": 0.5},
-    {"id": "B17", "name": "Branch 17", "qk": 0.6,  "ui": 6.0, "lc": 0.5,  "uc": 0.5},
-    {"id": "B18", "name": "Branch 18", "qk": 0.4,  "ui": 6.8, "lc": 0.5,  "uc": 0.5},
-    {"id": "B19", "name": "Branch 19", "qk": 0.2,  "ui": 7.5, "lc": 0.5,  "uc": 0.5},
-    {"id": "B20", "name": "Branch 20", "qk": 0.0,  "ui": 8.2, "lc": 0.5,  "uc": 0.5},
+    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": -4.5, "lc": 48.0, "uc": 72.0},
+    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -3.8, "lc": 44.0, "uc": 66.0},
+    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": -3.1, "lc": 40.0, "uc": 60.0},
+    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -2.6, "lc": 36.0, "uc": 54.0},
+    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": -1.9, "lc": 28.0, "uc": 32.0},  # UC = 80 % of Qk
+    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": -1.2, "lc": 28.0, "uc": 42.0},
+    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -0.5, "lc": 24.0, "uc": 36.0},
+    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 0.2,  "lc": 20.0, "uc": 30.0},
+    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": 0.8,  "lc": 16.0, "uc": 24.0},
+    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 1.5,  "lc": 14.5, "uc": 21.5},
+    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": 2.1,  "lc": 12.0, "uc": 18.0},
+    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 2.8,  "lc": 9.5,  "uc": 14.5},
+    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 3.4,  "lc": 8.0,  "uc": 12.0},
+    {"id": "B14", "name": "Branch 14", "qk": 8.0,  "ui": 4.0,  "lc": 6.5,  "uc": 9.5},
+    {"id": "B15", "name": "Branch 15", "qk": 5.0,  "ui": 4.7,  "lc": 6.0,  "uc": 7.0},  # LC = 120 % of Qk → excluded
+    {"id": "B16", "name": "Branch 16", "qk": 0.8,  "ui": 5.3,  "lc": 0.5,  "uc": 1.0},
+    {"id": "B17", "name": "Branch 17", "qk": 0.6,  "ui": 6.0,  "lc": 0.5,  "uc": 0.5},
+    {"id": "B18", "name": "Branch 18", "qk": 0.4,  "ui": 6.8,  "lc": 0.5,  "uc": 0.5},
+    {"id": "B19", "name": "Branch 19", "qk": 0.2,  "ui": 7.5,  "lc": 0.5,  "uc": 0.5},
+    {"id": "B20", "name": "Branch 20", "qk": 0.0,  "ui": 8.2,  "lc": 0.5,  "uc": 0.5},
 ]
 
 
@@ -153,10 +157,18 @@ def _init_state() -> None:
     st.session_state.setdefault("m3_mu_stock", MU_STOCK_DEFAULT)
     st.session_state.setdefault("m3_branch_data", copy.deepcopy(DEFAULT_BRANCHES))
 
-    # Backfill Lower/Upper Cap for branch rows loaded from an older state file.
-    for b in st.session_state["m3_branch_data"]:
-        b.setdefault("lc", LC_FALLBACK)
-        b.setdefault("uc", UC_FALLBACK)
+    # Migration: old state files written before LC/UC columns existed have
+    # lc = LC_FALLBACK (2.0) and uc = UC_FALLBACK (1e12) set by the previous
+    # backfill. Detect the 1e12 sentinel and replace lc/uc for every branch with
+    # values from DEFAULT_BRANCHES (matched by id) or proportional defaults.
+    branch_data = st.session_state["m3_branch_data"]
+    if any(float(b.get("uc", 0)) >= UC_FALLBACK - 1 for b in branch_data):
+        _defaults_by_id = {b["id"]: b for b in DEFAULT_BRANCHES}
+        for b in branch_data:
+            qk = float(b.get("qk", 0.0))
+            ref = _defaults_by_id.get(b["id"])
+            b["lc"] = ref["lc"] if ref else max(0.5, round(qk * 0.8, 1))
+            b["uc"] = ref["uc"] if ref else max(0.5, round(qk * 1.2, 1))
 
     st.session_state["m3_initialized"] = True
 
