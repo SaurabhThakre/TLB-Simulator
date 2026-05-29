@@ -20,7 +20,7 @@ LC_FALLBACK = 2.0
 UC_FALLBACK = 1e12  # effectively "no cap"
 
 STATE_FILE = "m3_state.json"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PERSIST_PREFIX = "m3_"
 PERSIST_SKIP = {
     "m3_cycle_results",
@@ -46,26 +46,26 @@ PERSIST_SKIP = {
 #   B05 — UC = 80% of Qk  → allocation gets clamped, freeing ΔP for redistribution.
 #   B15 — LC = 120% of Qk → Qk < LC, branch excluded from the queue.
 DEFAULT_BRANCHES = [
-    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": -4.5, "lc": 9.0, "uc": 72.0},
-    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -3.8, "lc": 8.0, "uc": 66.0},
-    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": -3.1, "lc": 7.5, "uc": 60.0},
-    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -2.6, "lc": 7.0, "uc": 54.0},
-    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": -1.9, "lc": 6.0, "uc": 32.0},  # UC = 80 % of Qk
-    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": -1.2, "lc": 5.0, "uc": 42.0},
-    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -0.5, "lc": 4.5, "uc": 36.0},
-    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 0.2,  "lc": 4.0, "uc": 30.0},
-    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": 0.8,  "lc": 3.0, "uc": 24.0},
-    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 1.5,  "lc": 2.5, "uc": 21.5},
-    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": 2.1,  "lc": 2.5, "uc": 18.0},
-    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 2.8,  "lc": 2.0, "uc": 14.5},
-    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 3.4,  "lc": 2.0, "uc": 12.0},
-    {"id": "B14", "name": "Branch 14", "qk": 8.0,  "ui": 4.0,  "lc": 2.0, "uc": 9.5},
-    {"id": "B15", "name": "Branch 15", "qk": 5.0,  "ui": 4.7,  "lc": 6.0, "uc": 7.0},  # LC = 120 % of Qk → excluded
-    {"id": "B16", "name": "Branch 16", "qk": 0.8,  "ui": 5.3,  "lc": 2.0, "uc": 1.0},
-    {"id": "B17", "name": "Branch 17", "qk": 0.6,  "ui": 6.0,  "lc": 2.0, "uc": 1.0},
-    {"id": "B18", "name": "Branch 18", "qk": 0.4,  "ui": 6.8,  "lc": 2.0, "uc": 1.0},
-    {"id": "B19", "name": "Branch 19", "qk": 0.2,  "ui": 7.5,  "lc": 2.0, "uc": 1.0},
-    {"id": "B20", "name": "Branch 20", "qk": 0.0,  "ui": 8.2,  "lc": 2.0, "uc": 1.0},
+    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": 2.1, "lc": 9.0, "uc": 72.0},
+    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -1.2, "lc": 8.0, "uc": 66.0},
+    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": 6.0, "lc": 7.5, "uc": 60.0},
+    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -3.8, "lc": 7.0, "uc": 54.0},
+    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": 0.8, "lc": 6.0, "uc": 32.0},  # UC = 80 % of Qk
+    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": 4.7, "lc": 5.0, "uc": 42.0},
+    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -4.5, "lc": 4.5, "uc": 36.0},
+    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 3.4,  "lc": 4.0, "uc": 30.0},
+    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": -0.5,  "lc": 3.0, "uc": 24.0},
+    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 7.5,  "lc": 2.5, "uc": 21.5},
+    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": -2.6,  "lc": 2.5, "uc": 18.0},
+    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 5.3,  "lc": 2.0, "uc": 14.5},
+    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 0.2,  "lc": 2.0, "uc": 12.0},
+    {"id": "B14", "name": "Branch 14", "qk": 8.0,  "ui": 8.2,  "lc": 2.0, "uc": 9.5},
+    {"id": "B15", "name": "Branch 15", "qk": 5.0,  "ui": -3.1, "lc": 6.0, "uc": 7.0},  # LC = 120 % of Qk → excluded
+    {"id": "B16", "name": "Branch 16", "qk": 0.8,  "ui": 1.5,  "lc": 2.0, "uc": 1.0},
+    {"id": "B17", "name": "Branch 17", "qk": 0.6,  "ui": -1.9,  "lc": 2.0, "uc": 1.0},
+    {"id": "B18", "name": "Branch 18", "qk": 0.4,  "ui": 4.0,  "lc": 2.0, "uc": 1.0},
+    {"id": "B19", "name": "Branch 19", "qk": 0.2,  "ui": 2.8,  "lc": 2.0, "uc": 1.0},
+    {"id": "B20", "name": "Branch 20", "qk": 0.0,  "ui": 6.8,  "lc": 2.0, "uc": 1.0},
 ]
 
 
