@@ -13,10 +13,11 @@ import streamlit as st
 
 EPS = 1e-9
 MAX_CYCLES = 50
-MIN_THRESHOLD_DEFAULT = 2.0
-DYNAMIC_DEMAND_DEFAULT = 1.0
-DYNAMIC_DAYS_DEFAULT = 1
 MU_STOCK_DEFAULT = 50.0
+# Fallbacks for branch data loaded from an older state file that predates the
+# Lower Cap / Upper Cap columns.
+LC_FALLBACK = 2.0
+UC_FALLBACK = 1e12  # effectively "no cap"
 
 STATE_FILE = "m3_state.json"
 SCHEMA_VERSION = 2
@@ -34,27 +35,30 @@ PERSIST_SKIP = {
     "m3_initialized",
 }
 
+# lc = Lower Cap (minimum dispatch load, MT) — LC = D × (0.5 × TC − I).
+# uc = Upper Cap (fixed per SKU-branch production quota, MT) — set by management.
+# Both are seeded with dummy values here and are editable in the UI.
 DEFAULT_BRANCHES = [
-    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": -4.5},
-    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -3.8},
-    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": -3.1},
-    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -2.6},
-    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": -1.9},
-    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": -1.2},
-    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -0.5},
-    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 0.2},
-    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": 0.8},
-    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 1.5},
-    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": 2.1},
-    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 2.8},
-    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 3.4},
-    {"id": "B14", "name": "Branch 14", "qk": 8.0, "ui": 4.0},
-    {"id": "B15", "name": "Branch 15", "qk": 5.0, "ui": 4.7},
-    {"id": "B16", "name": "Branch 16", "qk": 0.8, "ui": 5.3},
-    {"id": "B17", "name": "Branch 17", "qk": 0.6, "ui": 6.0},
-    {"id": "B18", "name": "Branch 18", "qk": 0.4, "ui": 6.8},
-    {"id": "B19", "name": "Branch 19", "qk": 0.2, "ui": 7.5},
-    {"id": "B20", "name": "Branch 20", "qk": 0.0, "ui": 8.2},
+    {"id": "B01", "name": "Branch 01", "qk": 60.0, "ui": -4.5, "lc": 5.0, "uc": 40.0},
+    {"id": "B02", "name": "Branch 02", "qk": 55.0, "ui": -3.8, "lc": 5.0, "uc": 38.0},
+    {"id": "B03", "name": "Branch 03", "qk": 50.0, "ui": -3.1, "lc": 4.0, "uc": 35.0},
+    {"id": "B04", "name": "Branch 04", "qk": 45.0, "ui": -2.6, "lc": 4.0, "uc": 30.0},
+    {"id": "B05", "name": "Branch 05", "qk": 40.0, "ui": -1.9, "lc": 3.5, "uc": 28.0},
+    {"id": "B06", "name": "Branch 06", "qk": 35.0, "ui": -1.2, "lc": 3.0, "uc": 25.0},
+    {"id": "B07", "name": "Branch 07", "qk": 30.0, "ui": -0.5, "lc": 3.0, "uc": 22.0},
+    {"id": "B08", "name": "Branch 08", "qk": 25.0, "ui": 0.2, "lc": 2.5, "uc": 18.0},
+    {"id": "B09", "name": "Branch 09", "qk": 20.0, "ui": 0.8, "lc": 2.5, "uc": 15.0},
+    {"id": "B10", "name": "Branch 10", "qk": 18.0, "ui": 1.5, "lc": 2.0, "uc": 13.0},
+    {"id": "B11", "name": "Branch 11", "qk": 15.0, "ui": 2.1, "lc": 2.0, "uc": 11.0},
+    {"id": "B12", "name": "Branch 12", "qk": 12.0, "ui": 2.8, "lc": 2.0, "uc": 9.0},
+    {"id": "B13", "name": "Branch 13", "qk": 10.0, "ui": 3.4, "lc": 1.5, "uc": 8.0},
+    {"id": "B14", "name": "Branch 14", "qk": 8.0, "ui": 4.0, "lc": 1.5, "uc": 6.0},
+    {"id": "B15", "name": "Branch 15", "qk": 5.0, "ui": 4.7, "lc": 1.0, "uc": 4.0},
+    {"id": "B16", "name": "Branch 16", "qk": 0.8, "ui": 5.3, "lc": 0.5, "uc": 2.0},
+    {"id": "B17", "name": "Branch 17", "qk": 0.6, "ui": 6.0, "lc": 0.5, "uc": 2.0},
+    {"id": "B18", "name": "Branch 18", "qk": 0.4, "ui": 6.8, "lc": 0.5, "uc": 2.0},
+    {"id": "B19", "name": "Branch 19", "qk": 0.2, "ui": 7.5, "lc": 0.5, "uc": 2.0},
+    {"id": "B20", "name": "Branch 20", "qk": 0.0, "ui": 8.2, "lc": 0.5, "uc": 2.0},
 ]
 
 
@@ -147,23 +151,14 @@ def _init_state() -> None:
 
     # 2. Apply hard-coded defaults for any key not present on disk.
     st.session_state.setdefault("m3_mu_stock", MU_STOCK_DEFAULT)
-    st.session_state.setdefault("m3_threshold_mode", "Fixed MT")
-    st.session_state.setdefault("m3_threshold_value", MIN_THRESHOLD_DEFAULT)
-    st.session_state.setdefault("m3_dynamic_demand", DYNAMIC_DEMAND_DEFAULT)
-    st.session_state.setdefault("m3_dynamic_days", DYNAMIC_DAYS_DEFAULT)
     st.session_state.setdefault("m3_branch_data", copy.deepcopy(DEFAULT_BRANCHES))
 
+    # Backfill Lower/Upper Cap for branch rows loaded from an older state file.
+    for b in st.session_state["m3_branch_data"]:
+        b.setdefault("lc", LC_FALLBACK)
+        b.setdefault("uc", UC_FALLBACK)
+
     st.session_state["m3_initialized"] = True
-
-
-def get_effective_threshold() -> float:
-    if st.session_state["m3_threshold_mode"] == "Fixed MT":
-        return float(st.session_state["m3_threshold_value"])
-    return max(
-        float(st.session_state["m3_threshold_value"]),
-        float(st.session_state["m3_dynamic_demand"])
-        * int(st.session_state["m3_dynamic_days"]),
-    )
 
 
 # --------------------------------------------------------------------------
@@ -195,40 +190,11 @@ def _render_global_inputs() -> None:
         key="m3_mu_stock",
         on_change=save_state,
     )
-
-    st.radio(
-        "Minimum Threshold Mode",
-        options=["Fixed MT", "Dynamic (max(Fixed MT, D × Days))"],
-        key="m3_threshold_mode",
-        on_change=save_state,
-        horizontal=True,
+    st.caption(
+        "The minimum dispatch threshold is now per-branch (Lower Cap, LC) and the "
+        "maximum is the per-branch Upper Cap (UC) — both set in the Branch "
+        "Configuration table below."
     )
-
-    st.number_input(
-        "Minimum Threshold (MT)",
-        min_value=0.5, step=0.5, format="%.1f",
-        key="m3_threshold_value",
-        on_change=save_state,
-    )
-
-    if st.session_state["m3_threshold_mode"] == "Dynamic (max(Fixed MT, D × Days))":
-        c1, c2 = st.columns(2)
-        with c1:
-            st.number_input(
-                "Daily Demand — D (MT/day)",
-                min_value=0.1, step=0.1, format="%.1f",
-                key="m3_dynamic_demand",
-                on_change=save_state,
-            )
-        with c2:
-            st.number_input(
-                "Days for Dynamic Threshold",
-                min_value=1, step=1,
-                key="m3_dynamic_days",
-                on_change=save_state,
-            )
-        eff = get_effective_threshold()
-        st.info(f"Effective threshold (Dynamic): {eff:.2f} MT")
 
 
 # --------------------------------------------------------------------------
@@ -243,25 +209,33 @@ def _commit_from_editor(edited: "pd.DataFrame") -> None:
     m3_branch_data list, never from the editor's current display order.
     """
     branches = st.session_state["m3_branch_data"]
+
+    def _num(row, col, fallback=0.0):
+        try:
+            return float(row[col])
+        except (TypeError, ValueError, KeyError):
+            return fallback
+
     edited_by_id: dict = {}
     for _, row in edited.iterrows():
         bid = str(row["Branch ID"])
-        try:
-            qk = float(row["Dispatch Qty Qk (MT)"])
-        except (TypeError, ValueError):
-            qk = 0.0
-        try:
-            ui = float(row["UI Score"])
-        except (TypeError, ValueError):
-            ui = 0.0
-        edited_by_id[bid] = {"name": str(row["Branch Name"]), "qk": qk, "ui": ui}
+        edited_by_id[bid] = {
+            "name": str(row["Branch Name"]),
+            "qk": _num(row, "Dispatch Qty Qk (MT)"),
+            "ui": _num(row, "UI Score"),
+            "lc": _num(row, "Lower Cap LC (MT)", LC_FALLBACK),
+            "uc": _num(row, "Upper Cap UC (MT)", UC_FALLBACK),
+        }
 
     new_data: List[dict] = []
     for b in branches:
         bid = b["id"]
         if bid in edited_by_id:
             e = edited_by_id[bid]
-            new_data.append({"id": bid, "name": e["name"], "qk": e["qk"], "ui": e["ui"]})
+            new_data.append({
+                "id": bid, "name": e["name"], "qk": e["qk"],
+                "ui": e["ui"], "lc": e["lc"], "uc": e["uc"],
+            })
         else:
             new_data.append(dict(b))
     st.session_state["m3_branch_data"] = new_data
@@ -279,13 +253,21 @@ def _render_branch_table() -> None:
         "**Branch Priority Formula — Urgency Index (UI):**  "
         "`UI = (I + SIT + PO) / D − (LT + LW)`  \n"
         "Sort: **UI ≤ 0** → descending Dispatch Qty · "
-        "**UI > 0** → ascending UI Score"
+        "**UI > 0** → ascending UI Score  \n"
+        "**Lower Cap (LC):**  `LC = D × (0.5 × TC − I)` — the minimum load a truck "
+        "can move. A branch whose share would fall below its LC is excluded from "
+        "that allocation.  \n"
+        "**Upper Cap (UC):**  a fixed per SKU-branch production quota set by "
+        "management — the most the MU may dispatch to that branch in one cycle. "
+        "Any allocation above UC is clamped and the surplus is redistributed."
     )
 
     df = pd.DataFrame([
         {"Branch ID": b["id"], "Branch Name": b["name"],
          "Dispatch Qty Qk (MT)": float(b["qk"]),
-         "UI Score": float(b.get("ui", 0.0))}
+         "UI Score": float(b.get("ui", 0.0)),
+         "Lower Cap LC (MT)": float(b.get("lc", LC_FALLBACK)),
+         "Upper Cap UC (MT)": float(b.get("uc", UC_FALLBACK))}
         for b in branches
     ])
 
@@ -306,6 +288,16 @@ def _render_branch_table() -> None:
                 "UI Score",
                 step=0.1, format="%.2f",
                 help="Urgency Index — lower = higher priority.",
+            ),
+            "Lower Cap LC (MT)": st.column_config.NumberColumn(
+                "Lower Cap LC (MT)",
+                min_value=0.0, step=0.5, format="%.1f",
+                help="LC = D × (0.5 × TC − I). Branch share below LC → excluded.",
+            ),
+            "Upper Cap UC (MT)": st.column_config.NumberColumn(
+                "Upper Cap UC (MT)",
+                min_value=0.0, step=0.5, format="%.1f",
+                help="Fixed per SKU-branch production quota. Allocation clamped to UC.",
             ),
         },
     )
@@ -340,6 +332,8 @@ def _render_branch_table() -> None:
                 "name": f"Branch {n:02d}",
                 "qk": 0.0,
                 "ui": 0.0,
+                "lc": LC_FALLBACK,
+                "uc": UC_FALLBACK,
             })
             st.session_state.pop("m3_branch_editor", None)
             save_state()
@@ -385,8 +379,8 @@ def _initialise_simulation() -> None:
         new_rem[b["id"]] = float(b["qk"])
 
     eligible = [b for b in branches if float(b["qk"]) > EPS]
-    # Sort by Urgency Index ascending — lower UI = higher priority.
-    eligible_sorted = sorted(eligible, key=lambda b: float(b.get("ui", 0.0)))
+    # Two-group sort: UI ≤ 0 → descending Qk, UI > 0 → ascending UI.
+    eligible_sorted = sort_branches_by_ui(eligible)
     ordered_ids = [b["id"] for b in eligible_sorted]
 
     st.session_state["m3_new_remaining"] = new_rem
@@ -409,6 +403,8 @@ def _build_row(
         "branch_id": branch["id"],
         "branch_name": branch["name"],
         "original_qk": float(branch["qk"]),
+        "lc": float(branch.get("lc", LC_FALLBACK)),
+        "uc": float(branch.get("uc", UC_FALLBACK)),
         "remaining_before": remaining_before,
         "allocated": allocated,
         "remaining_after": remaining_after,
@@ -416,78 +412,115 @@ def _build_row(
     }
 
 
-def _run_new_logic(P: float, threshold: float) -> dict:
+def _run_new_logic(P: float) -> dict:
+    """One Module-3 allocation pass for a single TLB cycle.
+
+    Per the proposed logic: rank the queue, run Eligible Set Expansion using each
+    branch's own Lower Cap (LC) as the floor, allocate proportionally, clamp every
+    allocation to its Upper Cap (UC), pool the freed surplus (ΔP) and redistribute
+    it inline — in the same pass — to zero-allocation branches. A single pass per
+    cycle; no internal cascade and no carry-forward to the next cycle.
+    """
     new_remaining: Dict[str, float] = st.session_state["m3_new_remaining"]
     queue: List[str] = st.session_state["m3_new_queue"]
-    ui_lookup: Dict[str, float] = {
-        b["id"]: float(b.get("ui", 0.0))
-        for b in st.session_state["m3_branch_data"]
-    }
+    lc_lookup: Dict[str, float] = {}
+    uc_lookup: Dict[str, float] = {}
+    for b in st.session_state["m3_branch_data"]:
+        lc_lookup[b["id"]] = float(b.get("lc", LC_FALLBACK))
+        uc_lookup[b["id"]] = float(b.get("uc", UC_FALLBACK))
 
-    # Active at start of cycle: in-queue branches with remaining > EPS.
-    # Preserve queue order — unserved at top (from previous rotation), served
-    # branches at bottom. Within a cycle's cascade passes we keep queue order;
-    # only the between-cycle queue rebuild re-sorts unserved by UI ascending.
-    active_start = [bid for bid in queue if new_remaining.get(bid, 0.0) > EPS]
+    # Active this cycle: in-queue branches whose remaining demand both is positive
+    # and clears their own Lower Cap (a branch with Qk < LC can't justify a truck).
+    # Queue order is preserved from the previous rotation (unserved at the top).
+    active = [
+        bid for bid in queue
+        if new_remaining.get(bid, 0.0) > EPS
+        and new_remaining.get(bid, 0.0) >= lc_lookup.get(bid, LC_FALLBACK) - EPS
+    ]
+    # Branches in queue with positive remaining but below their LC — parked, not
+    # served this cycle, but still counted as active for reporting/rotation.
+    below_lc = [
+        bid for bid in queue
+        if new_remaining.get(bid, 0.0) > EPS and bid not in active
+    ]
 
-    remaining_P = float(P)
     allocations: Dict[str, float] = {}
-    all_served: List[str] = []
 
-    # Cascade: keep running eligible-set expansion on the still-unserved-this-cycle
-    # branches with whatever stock is left, until P is exhausted or no branch
-    # can meet the minimum threshold in any remaining pass.
-    while True:
-        if remaining_P <= EPS:
+    # --- Eligible Set Expansion (ESE): largest top-k where every share ≥ its LC.
+    k_star = 0
+    for k in range(1, len(active) + 1):
+        top_k = active[:k]
+        total_q = sum(new_remaining[b] for b in top_k)
+        if total_q <= EPS:
             break
-        served_set = set(all_served)
-        active = [bid for bid in active_start if bid not in served_set]
-        if not active:
-            break
-
-        k_star = 0
-        for k in range(1, len(active) + 1):
-            top_k = active[:k]
-            total_q = sum(new_remaining[b] for b in top_k)
-            if total_q <= EPS:
-                break
-            trial = {b: new_remaining[b] * remaining_P / total_q for b in top_k}
-            min_alloc = min(trial.values())
-            if min_alloc < threshold:
-                k_star = k - 1
-                break
-            if k == len(active):
-                k_star = k
-
-        if k_star == 0:
+        trial = {b: new_remaining[b] * P / total_q for b in top_k}
+        if all(trial[b] >= lc_lookup[b] - EPS for b in top_k):
+            k_star = k
+        else:
             break
 
-        pass_served = list(active[:k_star])
-        total_q_star = sum(new_remaining[b] for b in pass_served)
-        if total_q_star <= EPS:
+    served_eligible = list(active[:k_star])
+
+    # --- Raw proportional allocation over the eligible set, then UC + demand clamp.
+    delta_p = 0.0
+    if served_eligible:
+        total_q_star = sum(new_remaining[b] for b in served_eligible)
+        for bid in served_eligible:
+            raw = new_remaining[bid] * P / total_q_star
+            capped = min(raw, uc_lookup[bid], new_remaining[bid])
+            allocations[bid] = capped
+            delta_p += max(0.0, raw - capped)
+
+    # --- Inline redistribution of the freed surplus ΔP to zero-allocation branches
+    # (those active but outside k*), proportional to their remaining demand, each
+    # share still subject to its own LC floor and UC ceiling.
+    candidates = list(active[k_star:])
+    redistributed: Dict[str, float] = {}
+    while candidates and delta_p > EPS:
+        total_qj = sum(new_remaining[j] for j in candidates)
+        if total_qj <= EPS:
             break
-        pass_alloc_sum = 0.0
-        for bid in pass_served:
-            raw = new_remaining[bid] * remaining_P / total_q_star
-            alloc = min(raw, new_remaining[bid])
-            allocations[bid] = alloc
-            pass_alloc_sum += alloc
+        shares = {j: new_remaining[j] * delta_p / total_qj for j in candidates}
+        infeasible = [j for j in candidates if shares[j] < lc_lookup[j] - EPS]
+        if infeasible:
+            # Drop the smallest-share branch that can't clear its LC, then retry.
+            worst = min(infeasible, key=lambda j: shares[j])
+            candidates.remove(worst)
+            continue
+        used = 0.0
+        for j in candidates:
+            give = min(shares[j], uc_lookup[j], new_remaining[j])
+            redistributed[j] = give
+            used += give
+        delta_p -= used
+        break
 
-        all_served.extend(pass_served)
-        remaining_P -= pass_alloc_sum
+    allocations.update(redistributed)
 
-    residual = max(0.0, remaining_P)
+    # Served order for queue rotation: eligible set first (queue order), then any
+    # branches that picked up redistributed surplus.
+    all_served = [b for b in served_eligible if allocations.get(b, 0.0) > EPS]
+    all_served += [b for b in candidates if redistributed.get(b, 0.0) > EPS]
+
+    total_allocated = sum(allocations.values())
+    residual = max(0.0, P - total_allocated)
+
+    active_start = active + below_lc
+    active_start_set = set(active_start)
+    served_set = set(all_served)
+    # Unserved, in queue order: had remaining demand at cycle start but got nothing.
+    unserved_ids = [
+        bid for bid in queue
+        if bid in active_start_set and bid not in served_set
+    ]
 
     warning = None
     if not active_start:
         warning = "All branches already fulfilled. No allocation needed this cycle."
     elif not all_served:
         warning = (
-            "Available stock too low to meet minimum threshold for any branch."
+            "Available stock too low: no branch can clear its Lower Cap this cycle."
         )
-
-    served_set = set(all_served)
-    unserved_ids = [bid for bid in active_start if bid not in served_set]
 
     # Per-branch rows for display, in canonical branch_data order.
     rows = []
@@ -506,18 +539,20 @@ def _run_new_logic(P: float, threshold: float) -> dict:
         new_remaining[bid] = max(0.0, new_remaining[bid] - alloc)
     st.session_state["m3_new_remaining"] = new_remaining
 
-    # New queue: unserved sorted by UI ascending at top, all served
-    # this cycle (across cascades, in served order) at bottom.
-    unserved_by_ui = sorted(unserved_ids, key=lambda b: ui_lookup.get(b, 0.0))
-    st.session_state["m3_new_queue"] = list(unserved_by_ui) + list(all_served)
+    # Queue rotation: served branches go to the bottom (in served order); every
+    # other branch keeps its current queue position so it advances toward the top.
+    served_lookup = set(all_served)
+    unserved_in_order = [bid for bid in queue if bid not in served_lookup]
+    st.session_state["m3_new_queue"] = unserved_in_order + list(all_served)
 
     return {
         "rows": rows,
         "served_ids": list(all_served),
-        "unserved_ids": list(unserved_by_ui),
+        "unserved_ids": list(unserved_ids),
         "served_ids_moved_to_bottom": list(all_served),
         "residual": residual,
-        "total_allocated": sum(allocations.values()),
+        "delta_p": delta_p,
+        "total_allocated": total_allocated,
         "branches_served": len(all_served),
         "branches_active": len(active_start),
         "warning": warning,
@@ -529,12 +564,10 @@ def _run_cycle() -> None:
         _initialise_simulation()
     st.session_state["m3_current_cycle"] += 1
     P = float(st.session_state["m3_mu_stock"])
-    threshold = get_effective_threshold()
-    result = _run_new_logic(P, threshold)
+    result = _run_new_logic(P)
     st.session_state["m3_cycle_results"].append({
         "cycle": st.session_state["m3_current_cycle"],
         "P": P,
-        "threshold": threshold,
         "result": result,
     })
     if st.session_state["m3_current_cycle"] >= MAX_CYCLES:
@@ -699,6 +732,8 @@ def _render_result_table(result: dict) -> None:
             "Branch": f"{r['branch_id']} — {r['branch_name']}",
             "UI Score": ui_lookup.get(r["branch_id"], 0.0),
             "Original Qk (MT)": r["original_qk"],
+            "LC (MT)": r.get("lc", 0.0),
+            "UC (MT)": r.get("uc", 0.0),
             "Before (MT)": r["remaining_before"],
             "Allocated (MT)": r["allocated"],
             "After (MT)": r["remaining_after"],
@@ -711,6 +746,8 @@ def _render_result_table(result: dict) -> None:
     styled = df.style.apply(_style_status_row, axis=1).format({
         "UI Score": "{:.2f}",
         "Original Qk (MT)": "{:.2f}",
+        "LC (MT)": "{:.2f}",
+        "UC (MT)": "{:.2f}",
         "Before (MT)": "{:.2f}",
         "Allocated (MT)": "{:.2f}",
         "After (MT)": "{:.2f}",
@@ -729,10 +766,11 @@ def _render_cycle_results() -> None:
             expanded=(entry["cycle"] == current_cycle),
         ):
             result = entry["result"]
-            st.caption(
-                f"MU Stock Used: {entry['P']:.2f} MT | "
-                f"Threshold: {entry['threshold']:.2f} MT"
-            )
+            delta_p = result.get("delta_p", 0.0)
+            caption = f"MU Stock Used: {entry['P']:.2f} MT"
+            if delta_p > EPS:
+                caption += f" | ΔP redistributed inline: {delta_p:.2f} MT"
+            st.caption(caption)
             if result.get("warning"):
                 st.warning(result["warning"])
 
